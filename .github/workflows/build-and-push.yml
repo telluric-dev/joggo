@@ -1,0 +1,281 @@
+# Reusable build-and-push workflow for the org's self-hosted CI runner.
+#
+# Companion to ../../self-hosted-marathon-runner-setup.md (server) and
+# ../../client-project-ci-setup.md (consumer). Runs on the home-PC self-hosted
+# runner, builds x86-64 image(s), and pushes to GHCR using the built-in
+# GITHUB_TOKEN — no long-lived registry PAT lives on the runner.
+#
+# SINGLE-IMAGE caller (most repos):
+#
+#   jobs:
+#     build:
+#       uses: example-org/marathon/.github/workflows/build-and-push.yml@main
+#       with:
+#         image-name: my-service        # optional; defaults to the repo name
+#         dockerfile: ./Dockerfile
+#       permissions: { contents: read, packages: write }
+#
+# MULTI-IMAGE caller (e.g. appone — api + web), with bare <sha> + latest tags:
+#
+#   jobs:
+#     build:
+#       uses: example-org/marathon/.github/workflows/build-and-push.yml@main
+#       with:
+#         tag-format: sha               # bare <sha> (+ latest on default branch)
+#         build-args: |                 # applied to ALL images
+#           GIT_SHA=${{ github.sha }}
+#         images: |
+#           [
+#             { "name": "appone-api", "dockerfile": "./api/Dockerfile", "context": "." },
+#             { "name": "appone-web", "dockerfile": "./web/Dockerfile", "context": ".",
+#               "build-args": "NEXT_PUBLIC_API_URL=https://api.example.com" }
+#           ]
+#       permissions: { contents: read, packages: write }
+#
+# IMAGE ORDERING (why `publish-latest` exists):
+#
+# On the default branch this workflow pushes <sha> AND :latest, and with a matrix
+# of images each build pushes its own :latest as soon as IT finishes. A caller
+# that publishes a runtime image plus a separate migrate/tools image therefore
+# has no guaranteed ordering between the two :latest pushes. The box CD migrates
+# with tools:latest only when it sees a new runner image, so losing that race
+# runs the PREVIOUS release's migrations against THIS release's code - a
+# data-correctness bug, not a cosmetic one.
+#
+# Two ways to be deterministic, and they compose:
+#   1. make the runtime job `needs:` the tools job, so tools:latest is already
+#      published before the runtime image exists at all (what appten does); or
+#   2. pass `publish-latest: false` on every image, then retag to :latest
+#      yourself once ALL images for the commit exist.
+#
+# The input defaults to TRUE so existing callers keep working unchanged. If your
+# repo publishes more than one image and anything downstream keys off :latest,
+# you want one of the two patterns above.
+#
+# PRIVATE @example-org/* DEPS: pass a read:packages token as the optional
+# `node_auth_token` secret; it reaches the build as a BuildKit secret that the
+# Dockerfile mounts for its install step. Use a PAT — a repo's own GITHUB_TOKEN
+# generally can't read packages published from another repo.
+#
+#       secrets:
+#         node_auth_token: ${{ secrets.GH_PACKAGES_READ_PAT }}
+
+name: build-and-push
+
+on:
+  workflow_call:
+    inputs:
+      # ---- single-image inputs (ignored when `images` is set) ----
+      image-name:
+        description: "Image name under ghcr.io/<owner>/. Defaults to the repo name."
+        type: string
+        required: false
+        default: ""
+      context:
+        description: "Docker build context path."
+        type: string
+        required: false
+        default: "."
+      dockerfile:
+        description: "Path to the Dockerfile."
+        type: string
+        required: false
+        default: "./Dockerfile"
+      # ---- multi-image input ----
+      images:
+        description: >
+          JSON array of image specs for multi-image repos. Each item:
+          { "name": required, "context"?, "dockerfile"?, "platforms"?, "build-args"? }.
+          When non-empty, this overrides image-name/context/dockerfile.
+        type: string
+        required: false
+        default: ""
+      # ---- shared inputs ----
+      platforms:
+        description: "Default target platforms. Must include linux/amd64 to match production."
+        type: string
+        required: false
+        default: "linux/amd64"
+      push:
+        description: "Push the image(s) (false = build only, e.g. for PR validation)."
+        type: boolean
+        required: false
+        default: true
+      build-args:
+        description: "Newline-separated KEY=VALUE build args applied to ALL images."
+        type: string
+        required: false
+        default: ""
+      tag-format:
+        description: >
+          Tag scheme: 'prefixed-sha' (default: sha-<longsha> + branch + pr + latest),
+          'sha' (bare <longsha> + latest), or 'sha-short' (bare <shortsha> + latest).
+        type: string
+        required: false
+        default: "prefixed-sha"
+      extra-tags:
+        description: "Extra docker/metadata-action `tags:` lines appended to the chosen format."
+        type: string
+        required: false
+        default: ""
+      publish-latest:
+        description: >
+          Push the ':latest' tag on the default branch. Default true, which is what
+          every existing caller already depends on. Set false when this repo
+          publishes SEVERAL images and something downstream triggers off
+          ':latest' - see the IMAGE ORDERING note in this file's header.
+        type: boolean
+        required: false
+        default: true
+      runner-labels:
+        description: "JSON array of runs-on labels for the self-hosted runner."
+        type: string
+        required: false
+        default: '["self-hosted", "linux", "x64", "marathon"]'
+    secrets:
+      node_auth_token:
+        required: false
+        description: >
+          read:packages token used INSIDE the docker build to fetch private
+          @example-org/* deps during pnpm install. Optional — images that don't
+          need it are unaffected.
+
+# Least privilege: only what's needed to read the repo and push to GHCR.
+# The caller must also grant these (a reusable workflow cannot exceed the caller's grant).
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # Build the matrix of images to build: either the caller's `images` JSON, or a
+  # single synthesized entry from the scalar inputs. Runs on the self-hosted runner
+  # (jq is present) so no GitHub-hosted minutes are spent.
+  prepare:
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - name: Compute image matrix
+        id: set
+        shell: bash
+        env:
+          IMAGES: ${{ inputs.images }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          CONTEXT: ${{ inputs.context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          PLATFORMS: ${{ inputs.platforms }}
+          GLOBAL_BUILD_ARGS: ${{ inputs.build-args }}
+        run: |
+          set -euo pipefail
+          if [ -n "${IMAGES//[[:space:]]/}" ]; then
+            base="$IMAGES"
+          else
+            base="$(jq -cn --arg n "$IMAGE_NAME" '[{name:$n}]')"
+          fi
+          # Normalize: fill defaults, and merge the global build-args with any per-image ones.
+          matrix="$(printf '%s' "$base" | jq -c \
+            --arg c "$CONTEXT" --arg d "$DOCKERFILE" --arg p "$PLATFORMS" --arg gb "$GLOBAL_BUILD_ARGS" '
+            [ .[] | {
+                name:          (.name // ""),
+                context:       (.context // $c),
+                dockerfile:    (.dockerfile // $d),
+                platforms:     (.platforms // $p),
+                "build-args":  ([ $gb, (.["build-args"] // "") ] | map(select(. != "")) | join("\n"))
+            } ]')"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build-and-push:
+    needs: prepare
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image name
+        id: name
+        shell: bash
+        run: |
+          name="${{ matrix.image.name }}"
+          if [ -z "$name" ]; then name="${GITHUB_REPOSITORY##*/}"; fi
+          owner="$(echo "${GITHUB_REPOSITORY%%/*}" | tr '[:upper:]' '[:lower:]')"
+          name="$(echo "$name" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${owner}/${name}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute tag config
+        id: tagcfg
+        shell: bash
+        run: |
+          case "${{ inputs.tag-format }}" in
+            sha)
+              cfg=$'type=sha,format=long,prefix=' ;;
+            sha-short)
+              cfg=$'type=sha,prefix=' ;;
+            prefixed-sha|*)
+              cfg=$'type=sha,format=long\ntype=ref,event=branch\ntype=ref,event=pr' ;;
+          esac
+          # ':latest' is appended here rather than baked into the cases above so
+          # that publish-latest=false suppresses it for every tag-format at once.
+          if [ "${{ inputs.publish-latest }}" = "true" ]; then
+            cfg="$cfg"$'\ntype=raw,value=latest,enable={{is_default_branch}}'
+          else
+            echo "::notice title=latest suppressed::publish-latest=false - no ':latest' tag pushed; retag deliberately once every image exists"
+          fi
+          extra="${{ inputs.extra-tags }}"
+          if [ -n "$extra" ]; then cfg="$cfg"$'\n'"$extra"; fi
+          { echo "cfg<<__EOF__"; printf '%s\n' "$cfg"; echo "__EOF__"; } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # Put the buildkit builder in the SLOT DIND's network namespace instead of giving
+          # it one of its own. That namespace is the one the runner hardening actually
+          # covers: marathon-dind-1 runs with --sysctl net.ipv6.conf.all.disable_ipv6=1 and reads
+          # 1 on the box. A builder in its OWN namespace reads 0 — measured 2026-09-13 by
+          # running a container on the slot daemon — which is why the slot-level guard never
+          # reached the build itself.
+          #
+          # What it stops: buildx's docker-container driver spawns buildx_buildkit_builder-*
+          # as a THIRD container on the slot daemon, and that container fetches the
+          # `# syntax=` frontend from Docker Hub. On 2026-09-13 it drew Cloudflare's AAAA for
+          # auth.docker.io and died with
+          #   dial tcp [2606:4700:4403::ac40:904e]:443: cannot assign requested address
+          # on an IPv4-only slot network (appthree, board C-c03). Same shape as
+          # appthree 2026-09-06 and C-c01 — three sightings, one namespace short.
+          driver-opts: network=host
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags & labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: ${{ steps.tagcfg.outputs.cfg }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: ${{ matrix.image.platforms }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ matrix.image.build-args }}
+          # BuildKit secret (not a build-arg): mounted only for the RUN that asks
+          # for it, so the token never lands in image history or a layer.
+          secrets: |
+            node_auth_token=${{ secrets.node_auth_token }}
+          provenance: false
+          # Per-image cache scope so parallel matrix builds don't clobber each other.
+          cache-from: type=gha,scope=${{ steps.name.outputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ steps.name.outputs.image }}

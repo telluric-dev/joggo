@@ -1,0 +1,44 @@
+// Tailscale ACL policy for the self-hosted CI runner ("marathon").
+//
+// Companion to ../self-hosted-marathon-runner-setup.md (Step 3.3). Paste this into the
+// Tailscale admin console -> Access Controls, or sync via GitOps. HuJSON (JSON
+// with comments + trailing commas) is what the admin console expects.
+//
+// Intent:
+//   - The CI box (tag:ci) has NO inbound access from anyone by default.
+//   - Only admin devices (tag:admin) may reach it, and only for SSH management.
+//   - Everything else is denied (Tailscale ACLs are default-deny).
+{
+  // Who is allowed to own/assign each tag. Only org owners here.
+  "tagOwners": {
+    "tag:ci": ["autogroup:owner"],
+    "tag:admin": ["autogroup:owner"],
+  },
+
+  "acls": [
+    // Admin devices may reach the CI box, and only on the SSH port.
+    {
+      "action": "accept",
+      "src": ["tag:admin"],
+      "dst": ["tag:ci:22"],
+    },
+    // No other rule grants access to tag:ci -> default-deny applies to everyone else.
+  ],
+
+  // Tailscale SSH: admin devices may SSH into marathon as ghrunner or root.
+  // This replaces a public sshd; access is governed entirely by these ACLs.
+  "ssh": [
+    {
+      "action": "accept",
+      "src": ["tag:admin"],
+      "dst": ["tag:ci"],
+      "users": ["ghrunner", "root"],
+    },
+  ],
+
+  // Optional: require SSO re-auth check for admins (uncomment to enable).
+  // "tests": [
+  //   { "src": "tag:admin", "accept": ["tag:ci:22"] },
+  //   { "src": "tag:ci",    "deny":   ["tag:admin:22"] },
+  // ],
+}

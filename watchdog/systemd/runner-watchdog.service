@@ -1,0 +1,10 @@
+[Unit]
+Description=Watchdog for a wedged GitHub Actions runner listener
+Documentation=https://github.com/example-org/marathon
+After=actions.runner.example-org.marathon.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/runner-watchdog.sh
+# The script's own guards decide whether to act; a non-zero exit means the
+# recovery itself failed, which is worth seeing in the journal.

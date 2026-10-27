@@ -1,0 +1,77 @@
+# Containerized runner slot %i — one job per container, persistent registration.
+# Installs to: /etc/systemd/system/marathon-slot@.service
+#   systemctl enable --now marathon-slot@1
+#
+# THIS REPLACES actions.runner.example-org.marathon.service — it does not run beside it.
+# One registration can hold exactly one session, so Conflicts= makes systemd enforce
+# what GitHub would otherwise enforce with a 95-second retry loop.
+#
+# ROLLBACK (single command, no state to unwind):
+#   systemctl disable --now marathon-slot@1 && systemctl start actions.runner.example-org.marathon.service
+#
+# Self-heal mapping — the three layers from install-marathon-selfheal.sh:
+#   1. clock  — unchanged, host-level chrony. The launcher additionally REFUSES to
+#               start on a skewed clock, so drift can no longer become a hot
+#               registration loop the way it would with a naive Restart=always.
+#   2. crash  — Restart=always below. A clean `--once` exit is also a "crash" as far
+#               as systemd is concerned, which is exactly what we want: next job,
+#               fresh container.
+#   3. wedge  — COVERED since 2026-09-06. runner-watchdog.sh now picks its target by
+#               asking which runner is live, so it follows this unit automatically; no
+#               drop-in or override is needed here. Two of the three blockers that were
+#               written down turned out not to exist: _diag is already a HOST bind
+#               (/var/log/marathon-slots/%i/_diag), and a host-side pgrep DOES see the
+#               containerized Runner.Worker, so the "never restart under a job" guard
+#               needed no porting. What did change is RECOVER_TIMEOUT: a slot restart
+#               pays teardown (TimeoutStopSec below) PLUS a ~45s cold start, so it is
+#               360s here against 180s for the persistent unit.
+#               Verified by fault injection on 2026-09-06: forced verdict on an idle
+#               slot -> restart -> new listener log -> RECOVERED in 46s.
+#               The silence threshold is INHERITED (3900s), not re-measured: it is the
+#               same listener binary doing the same long poll, and the untested case
+#               (a >50min idle slot) errs toward acting late, not wrongly.
+#   4. pause  — NOT a self-heal layer, but it interacts with them: ci-pause.sh writes
+#               /var/lib/ci-slot/%i.paused and the launcher holds there WITHOUT a listener,
+#               so the unit stays active with no containers. Restart=always never fights it
+#               (there is no exit to restart), and runner-watchdog.sh refuses to read a hold
+#               as a wedge. `systemctl status` showing active with nothing running is the
+#               expected shape of a pause — check `ci-pause status` before assuming a fault.
+[Unit]
+Description=Containerized GitHub Actions runner slot %i
+Documentation=https://github.com/example-org/marathon
+After=docker.service
+Requires=docker.service
+Conflicts=actions.runner.example-org.marathon.service
+# NOTE: StartLimit* live in [Unit], NOT [Service] — systemd silently ignores them in
+# [Service] ("Unknown key"), which would leave the default 5-starts-in-10s limiter
+# armed. Normal --once turnover restarts constantly and WOULD trip it, dropping the
+# slot into a permanently failed state with nothing to revive it. Disable it here and
+# rely on RestartSteps/RestartMaxDelaySec for backoff instead.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/run-containerized-slot.sh %i
+# Normal turnover is: take one job, exit 0, restart. Restarts are therefore CONSTANT and
+# EXPECTED, and RestartSec is paid before every single job.
+Restart=always
+RestartSec=2
+#
+# DO NOT ADD RestartSteps/RestartMaxDelaySec HERE. That was tried on 2026-09-05 and caused a
+# 5-minute delay before EVERY job by 2026-09-06:
+#   08:23:34 build-migrate completed Succeeded
+#   08:28:58 Scheduled restart job, restart counter is at 10   <- 5 minutes of nothing
+# systemd's restart backoff cannot tell "clean exit after a successful job" from "failed to
+# start"; with --once, success drives the counter, so the backoff escalated to its maximum and
+# penalised exactly the case it was meant to protect. A run sat queued for 28 minutes.
+#
+# Backoff on FAILURE belongs in the launcher, which is the only thing that knows the difference
+# — see the escalating sleep in its die(). systemd's job here is just to restart promptly.
+# The launcher's own EXIT trap tears down containers, network and volumes; give it
+# room to finish rather than leaving orphans (the failure mode that accumulated
+# 70 volumes / 12.79GB before 2026-09-05).
+TimeoutStopSec=180
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

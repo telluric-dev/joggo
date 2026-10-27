@@ -1,0 +1,17 @@
+[Unit]
+Description=Refresh the CI day report hourly
+
+[Timer]
+# Hourly keeps the page current without hammering the API (a render is ~45 s).
+# The "CI day" runs 03:00->03:00 local == 00:00Z->00:00Z, and the page empties
+# itself when the UTC date rolls, so no separate end-of-day render is needed.
+OnCalendar=hourly
+# Stagger off the exact hour so a render never coincides with the top-of-hour
+# pile-up of scheduled workflows.
+RandomizedDelaySec=300
+# Catch up after the box was off or rebooted -- which is the whole reason this
+# machine needs the report in the first place.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

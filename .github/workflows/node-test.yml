@@ -1,0 +1,306 @@
+# Reusable containerized test workflow (Node + Postgres) for the self-hosted runner.
+#
+# Companion to ../../client-project-ci-setup.md. Encapsulates "option 1" isolation
+# once, so consumer repos get it in a few lines instead of hand-rolling a
+# container + service block per repo.
+#
+# Why this exists: the runner (marathon) is a shared dev+CI box. A test job that
+# pins a host DB port collides with dev databases on the machine. This workflow
+# runs the job INSIDE a container and attaches a Postgres SERVICE with NO host
+# port mapping - the job reaches the DB at `postgres:5432` over the private job
+# network, so nothing binds a host port and it can never collide.
+#
+# Scope: the Node + Postgres test shape (what appone uses). Repos with a
+# different service set still write their own job; this covers the common case.
+#
+# Caller example (appone):
+#
+#   jobs:
+#     test:
+#       uses: example-org/marathon/.github/workflows/node-test.yml@main
+#       with:
+#         postgres-user: handsfree_clinic
+#         postgres-password: handsfree_clinic
+#         postgres-db: handsfree_clinic_test
+#         pre-command: bash .github/scripts/install-pnpm-prisma-shim.sh
+#         db-setup-command: |
+#           pnpm run db:generate
+#           pnpm --filter @handsfree-clinic/api run db:migrate:deploy
+#           pnpm run db:seed
+#         test-command: |
+#           pnpm run lint
+#           pnpm run test
+
+name: node-test
+
+on:
+  workflow_call:
+    inputs:
+      test-command:
+        description: "Command(s) to run the tests. Required."
+        type: string
+        required: true
+      test-max-workers:
+        description: >
+          Cap the test runner's worker pool so one big suite cannot saturate the
+          self-hosted box. Accepts a count ("3") or a percentage of cores ("50%").
+          Empty string disables the cap. Applies to vitest (VITEST_MAX_THREADS /
+          VITEST_MAX_FORKS); other runners need their own flag in test-command.
+        type: string
+        required: false
+        default: "50%"
+      install-command:
+        description: "Dependency install command."
+        type: string
+        required: false
+        default: "pnpm install --frozen-lockfile"
+      pre-command:
+        description: "Optional command run after install, before db-setup (e.g. a codegen or shim)."
+        type: string
+        required: false
+        default: ""
+      db-setup-command:
+        description: "Optional DB prep (generate/migrate/seed) run before tests."
+        type: string
+        required: false
+        default: ""
+      working-directory:
+        description: "Directory to run commands in."
+        type: string
+        required: false
+        default: "."
+      container-image:
+        description: "Job container image. Use a Debian-based image (Prisma needs glibc/openssl)."
+        type: string
+        required: false
+        default: "node:22"
+      apt-packages:
+        description: "Extra apt packages to install in the job container (space-separated)."
+        type: string
+        required: false
+        default: ""
+      postgres-version:
+        description: "Postgres service image tag."
+        type: string
+        required: false
+        default: "16-alpine"
+      postgres-user:
+        type: string
+        required: false
+        default: "postgres"
+      postgres-password:
+        type: string
+        required: false
+        default: "postgres"
+      postgres-db:
+        type: string
+        required: false
+        default: "test"
+      postgres-health-start-period:
+        description: >-
+          Grace period during which a failing pg_isready does NOT count against
+          --health-retries. Docker default "0s" keeps existing behaviour. Raise it on a runner
+          whose disk makes first-boot initdb slower than interval*retries: marathon was measured
+          at 3m07s to first connection against a ~75s budget, so every job there died in
+          "Initialize containers" before checkout and no repo code ran.
+        required: false
+        type: string
+        default: '0s'
+      database-url-env:
+        description: "Env var name that receives the Postgres connection URL."
+        type: string
+        required: false
+        default: "DATABASE_URL"
+      extra-env:
+        description: "Newline-separated KEY=VALUE pairs exported to all steps."
+        type: string
+        required: false
+        default: ""
+      enable-cache:
+        description: "Cache the pnpm store between runs."
+        type: boolean
+        required: false
+        default: true
+      runner-labels:
+        description: "JSON array of runs-on labels for the self-hosted runner."
+        type: string
+        required: false
+        default: '["self-hosted", "linux", "x64", "marathon"]'
+    secrets:
+      NODE_AUTH_TOKEN:
+        description: "read:packages token for private npm registries (e.g. GitHub Packages). Referenced by the repo's .npmrc as ${NODE_AUTH_TOKEN} at install time."
+        required: false
+      SYNCMUX_LICENSE_KEY:
+        description: "Optional runtime license key some test suites read (exported to all steps)."
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
+    container:
+      image: ${{ inputs.container-image }}
+    services:
+      postgres:
+        image: postgres:${{ inputs.postgres-version }}
+        env:
+          POSTGRES_USER: ${{ inputs.postgres-user }}
+          POSTGRES_PASSWORD: ${{ inputs.postgres-password }}
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+        # No `ports:` on purpose - reached at `postgres:5432` over the job network,
+        # so no host port is bound and dev DBs on the runner can't collide.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --health-start-period ${{ inputs.postgres-health-start-period }}
+    env:
+      # Give pnpm a global home that's on PATH so global installs (and pnpm's own
+      # global-bin sanity check) don't error inside the container.
+      PNPM_HOME: /opt/pnpm
+      # Auth for private npm registries. The repo's .npmrc reads ${NODE_AUTH_TOKEN}
+      # (e.g. //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}); empty when the
+      # caller passes no secret, which is fine for repos with only public deps.
+      NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+      SYNCMUX_LICENSE_KEY: ${{ secrets.SYNCMUX_LICENSE_KEY }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Let the tests run git. The job is root inside the container while the workspace is
+      # bind-mounted from the host runner user, so git calls the repo dubiously owned and
+      # refuses it. actions/checkout DOES add the exception, but only to a throwaway global
+      # config -- its log reads "Temporarily overriding HOME=... before making global git
+      # config changes / Adding repository directory to the TEMPORARY git global config as a
+      # safe directory" -- and that is gone by the time any later step runs. So checkout
+      # succeeds and every subsequent `git` in the job dies with:
+      #
+      #   fatal: detected dubious ownership in repository at /__w/<owner>/<repo>
+      #
+      # This is the read side of the same boundary the "Restore workspace ownership" step
+      # below handles on the write side; we had only ever fixed the write side. It bites any
+      # caller whose tests shell out to git and it bites them ONLY here, because on a
+      # GitHub-hosted runner the workspace and the job user match. Found 2026-09-23 when
+      # appone's suite first got far enough to run: INV-SDL-01 (specs carry a threat model,
+      # via `git log --diff-filter=A`) and INV-SC-05 (the Lambda code channel is gone, via
+      # `git ls-files`) both failed on it. Those assertions are RIGHT to use git -- tracked
+      # state is a stronger claim than filesystem state -- so the environment is what gives.
+      - name: Trust the workspace (git safe.directory)
+        shell: bash
+        working-directory: .
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install extra apt packages
+        if: ${{ inputs.apt-packages != '' }}
+        shell: bash
+        working-directory: .
+        run: apt-get update && apt-get install -y --no-install-recommends ${{ inputs.apt-packages }}
+
+      - name: Export env (DB url + extras)
+        shell: bash
+        working-directory: .
+        run: |
+          echo "${{ inputs.database-url-env }}=postgresql://${{ inputs.postgres-user }}:${{ inputs.postgres-password }}@postgres:5432/${{ inputs.postgres-db }}" >> "$GITHUB_ENV"
+          if [ -n "${{ inputs.extra-env }}" ]; then
+            printf '%s\n' "${{ inputs.extra-env }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Enable pnpm (corepack) + PATH
+        shell: bash
+        working-directory: .
+        run: |
+          corepack enable
+          mkdir -p "$PNPM_HOME"
+          echo "$PNPM_HOME" >> "$GITHUB_PATH"
+
+      - name: Cache pnpm store
+        if: ${{ inputs.enable-cache }}
+        uses: actions/cache@v4
+        with:
+          # pnpm's DEFAULT store location (XDG), independent of PNPM_HOME.
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        shell: bash
+        run: ${{ inputs.install-command }}
+
+      - name: Pre-test command
+        if: ${{ inputs.pre-command != '' }}
+        shell: bash
+        run: ${{ inputs.pre-command }}
+
+      - name: Database setup
+        if: ${{ inputs.db-setup-command != '' }}
+        shell: bash
+        run: ${{ inputs.db-setup-command }}
+
+      - name: Run tests
+        shell: bash
+        env:
+          TEST_MAX_WORKERS: ${{ inputs.test-max-workers }}
+        run: |
+          # Cap the test runner's parallelism. marathon is a single-slot 6-core box:
+          # an uncapped vitest pool over a large suite drives it into swap, and the
+          # first casualty is any timing-sensitive test (userEvent typing races against
+          # the 5s testTimeout) - which then fails a DIFFERENT test each run, looking
+          # like flaky app code rather than a saturated executor. Capping is cheaper
+          # than growing the VM and often no slower: the thrashing cost more than the
+          # extra workers won.
+          if [ -n "${TEST_MAX_WORKERS:-}" ]; then
+            cores="$(nproc)"
+            case "$TEST_MAX_WORKERS" in
+              *%)
+                pct="${TEST_MAX_WORKERS%\%}"
+                workers=$(( cores * pct / 100 ))
+                ;;
+              *)
+                workers="$TEST_MAX_WORKERS"
+                ;;
+            esac
+            # Never below 1, never more than the box actually has.
+            [ "$workers" -lt 1 ] && workers=1
+            [ "$workers" -gt "$cores" ] && workers="$cores"
+            export VITEST_MAX_THREADS="$workers"
+            export VITEST_MAX_FORKS="$workers"
+            echo "::notice title=test worker cap::vitest limited to $workers worker(s) of $cores cores (test-max-workers=$TEST_MAX_WORKERS)"
+          fi
+          ${{ inputs.test-command }}
+
+      - name: Restore workspace ownership for the host runner
+        if: always()
+        shell: bash
+        working-directory: .
+        run: |
+          # This job runs as root inside the container, so files it writes into the
+          # bind-mounted dirs are root-owned. On a persistent self-hosted runner that
+          # breaks the NEXT non-container job (its checkout cleanup hits EACCES). Hand
+          # the dirs back to the host runner user by matching the work-root's owner.
+          #
+          # _actions and _tool are SHARED BY EVERY REPO on the runner and sit OUTSIDE
+          # GITHUB_WORKSPACE, so root-owned leftovers there break *other* repos' jobs.
+          # They have to be named explicitly. (Sept 2026: a container job poisoned the
+          # shared workspace and it took a day to spot, because the failure only shows
+          # when a later checkout has a genuinely new object to write.)
+          ref_uid="$(stat -c %u /__w)"; ref_gid="$(stat -c %g /__w)"
+          failed=0
+          for d in "$GITHUB_WORKSPACE" "${RUNNER_TEMP:-/__w/_temp}" "${HOME:-/github/home}" /__w/_actions /__w/_tool; do
+            [ -e "$d" ] || continue
+            # Only touch entries whose owner actually differs - a blanket chown -R over
+            # _tool/_actions would walk tens of thousands of files on every single job.
+            find "$d" \( ! -uid "$ref_uid" -o ! -gid "$ref_gid" \) -exec chown "$ref_uid:$ref_gid" {} + || failed=1
+          done
+          # Never fail the job on cleanup - but never hide it either. The previous
+          # version ended in "2>/dev/null || true", so a cleanup that silently did
+          # nothing looked identical to one that worked.
+          if [ "$failed" -ne 0 ]; then
+            echo "::warning::workspace ownership restore was incomplete; the next job on this runner may fail its checkout"
+          fi
+          exit 0

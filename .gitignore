@@ -1,0 +1,20 @@
+# Local operator state. None of this belongs in the repo: it is specific to one
+# machine, and some of it is specific to one organisation's repositories.
+*.local
+*.local.*
+watch-repos
+watch-notify
+
+# The guard's and watcher's working state, which live outside the repo by
+# default (C:\ProgramData\marathon) but land here if you point them at it.
+mem-watch.csv
+wsl-mem-guard.log
+snapshots/
+
+# Anything you copied from an .example and edited for your own org.
+*.example.filled
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp

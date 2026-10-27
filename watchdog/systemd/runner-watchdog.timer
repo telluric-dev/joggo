@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the runner listener watchdog every 5 minutes
+Documentation=https://github.com/example-org/marathon
+
+[Timer]
+# Give the runner time to settle after boot before judging its liveness.
+OnBootSec=10min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=runner-watchdog.service
+
+[Install]
+WantedBy=timers.target

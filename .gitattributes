@@ -1,0 +1,16 @@
+# LF everywhere, enforced in the repository.
+#
+# This matters more than usual here: every .sh in this repo runs inside the WSL
+# Linux guest, and a shell script checked out with CRLF has a broken shebang --
+# `/usr/bin/env bash\r` is not a file, and the error you get ("no such file or
+# directory" for a file that plainly exists) sends you looking in the wrong
+# place entirely. On a Windows clone with core.autocrlf=true that happens
+# silently at checkout.
+* text=auto eol=lf
+
+# PowerShell is run by Windows but tolerates LF, so it is included above for
+# consistency rather than excluded.
+
+# Keep binary-ish things untouched should any ever arrive.
+*.png binary
+*.woff2 binary

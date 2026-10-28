@@ -146,17 +146,16 @@ function Get-JoggoRamMB {
 # rather than shipping the absolute numbers is what makes them mean the same
 # thing on an 8 GB or a 64 GB box.
 #
-# THE SLOT COUNT DOES NOT SCALE PAST TWO, and that is deliberate. RAM decides
-# whether a second slot fits at all, and nothing beyond that: this workload is
-# IO-bound, not RAM-bound (docs/adding-a-slot.md measures 30-40% of tasks
-# stalled on IO with a SINGLE job running, and calls the second slot only
-# "mostly free"). A tier table keyed on RAM above 32 GB would be inventing
-# evidence for a configuration nothing here has run.
+# THE SLOT COUNT comes from install/slots.ps1, which preflight loads too, so the
+# default here and the check there cannot disagree again (they did: this said 1/2,
+# preflight said 1/2/3). It sizes from the WSL VM's memory cap rather than total
+# RAM, and stops at two because the disk saturates before memory runs out --
+# slots.ps1 has the measurements. -Slots overrides it either way.
+. (Join-Path $PSScriptRoot 'slots.ps1')
 function Get-JoggoDefaults {
   param([int]$RamMB)
   if($RamMB -le 0){ throw 'RAM size unknown' }
-  $slots = 2
-  if($RamMB -lt 12288){ $slots = 1 }
+  $slots = (Get-JoggoSlotAdvice -RamMB $RamMB).slots
   @{
     scope             = ''
     org               = ''
@@ -182,6 +181,9 @@ function Get-JoggoDefaults {
     startOnBoot       = $true
     tailscale         = $false
     filterAaaa        = $false
+    # DNS servers for containers, comma-separated. Empty = step 40 fills it from the
+    # Windows adapters that are UP, plus 1.1.1.1/8.8.8.8 as fallback. See phase_docker.
+    dockerDns         = ''
     ramMB             = $RamMB
   }
 }
@@ -208,7 +210,7 @@ function Get-JoggoKeys {
   @(
     'scope','org','repo','runnerName','labels','slots','distro','runnerUser',
     'guard','guardWarnMB','guardCriticalMB','guardIntervalMin','sampler',
-    'watchdog','monitor','agentSupervisor','startOnBoot','tailscale','filterAaaa','ramMB'
+    'watchdog','monitor','agentSupervisor','startOnBoot','tailscale','filterAaaa','dockerDns','ramMB'
   )
 }
 
@@ -347,7 +349,11 @@ function Invoke-JoggoWizard {
   $Cfg.runnerUser = Ask 'runner user (unprivileged, never root)' $Cfg.runnerUser
   # RAM decides whether a second slot fits; it does not justify a third. The
   # prompt says so rather than implying a ladder.
-  $Cfg.slots      = [int](Ask ("slots (1 under 12 GB, 2 otherwise; this box has {0} MB)" -f $Cfg.ramMB) ([string]$Cfg.slots))
+  # Say WHY before asking, so the default is a recommendation someone can disagree with
+  # on purpose rather than a number to accept by pressing Enter.
+  $adv = Get-JoggoSlotAdvice -RamMB $Cfg.ramMB
+  Write-Host ("  slots: " + $adv.why)
+  $Cfg.slots      = [int](Ask ("slots (1-8; recommended {0}, fits {1} by memory)" -f $adv.slots, $adv.fit) ([string]$Cfg.slots))
 
   $Cfg.guard = AskBool 'install the memory guard (recommended)' $Cfg.guard
   if($Cfg.guard){
@@ -669,7 +675,12 @@ function Invoke-Phase {
   if($r.out){
     foreach($l in ($r.out -split "`n")){ if($l.TrimEnd()){ Write-JLine $Ctx ("       " + $l.TrimEnd()) } }
   }
-  if($r.err -and -not $r.ok){
+  # STDERR ALWAYS, not only when the phase failed. Every WARN the Linux half prints goes to
+  # stderr, and this used to show stderr only for a FAILED phase -- so a warning inside a
+  # phase that otherwise succeeded was dropped on the floor. That is how the first real
+  # uninstall printed "uninstall finished" while warning, unseen, that slot 1 could not be
+  # deregistered and was still on the Runners page.
+  if($r.err){
     foreach($l in ($r.err -split "`n")){ if($l.TrimEnd()){ Write-JLine $Ctx ("       " + $l.TrimEnd()) } }
   }
   $r

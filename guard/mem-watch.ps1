@@ -1,4 +1,4 @@
-# mem-watch.ps1 — catch the box degrading, with evidence, at the moment it happens.
+﻿# mem-watch.ps1 — catch the box degrading, with evidence, at the moment it happens.
 #
 # WHY THIS EXISTS
 # The box runs fine for hours or days with two CI slots and two Claude sessions, then

@@ -26,6 +26,7 @@ if($Ctx.DryRun){
     Plan $Ctx "would prepare slot $n with add-slot.sh (copies the root, STRIPS the copied credentials) and register it as $($Cfg.runnerName)-$n with the same labels, a different name, and NO --replace"
   }
   Plan $Ctx "would enable joggo-slot@1..$($Cfg.slots) and read is-enabled back (started in step 95)"
+  Plan $Ctx "would retire any existing slot above $($Cfg.slots): disable + deregister + remove its root if idle; if it is running a job, only pause it (never kill the job)"
   Add-Result $Ctx 'slots' 'pass' 'dry run' ''
   return
 }

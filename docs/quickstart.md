@@ -49,7 +49,8 @@ duplicating: each step detects "already done" and says so. Step `10-wsl-feature`
 it says so and tells you how to resume. Exit codes: `0` success, `1` blocking failure, `2` bad
 usage, `3` preflight failed.
 
-Defaults worth knowing: `-Slots` scales with RAM (1 under 12 GB, 2 for 12–32 GB, 3 above), the
+Defaults worth knowing: `-Slots` defaults to what fits the WSL VM's memory cap (~3 GB a slot on
+a 1 GB base) and stops at 2 — see [How many slots](adding-a-slot.md#how-many-slots); the
 memory guard's thresholds scale too (warn 15% of RAM, critical 7.5% — 2500 and 1200 MB on the
 16 GB box they were measured on), the WPF monitor is off, and `-Tailscale` is off.
 

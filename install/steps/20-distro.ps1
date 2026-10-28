@@ -16,7 +16,7 @@ $payload = @(
   'slots\dind-image\build.sh','slots\dind-image\Dockerfile','slots\runner-image\Dockerfile',
   'watchdog\runner-watchdog.sh','watchdog\rerun-after-reboot.sh',
   'watchdog\systemd\runner-watchdog.service','watchdog\systemd\runner-watchdog.timer',
-  'watchdog\systemd\actions-runner-restart-override.conf',
+  'watchdog\systemd\actions-runner-restart-override.conf','watchdog\systemd\rerun-after-reboot.service',
   'network\filter-aaaa.conf'
 )
 

@@ -30,7 +30,12 @@ if($Cfg.monitor){
       Fail -Ctx $Ctx -Problem 'monitor\deploy-monitor.ps1 is missing from the repo' `
         -Action 'run without -Monitor, or restore the file.' -Code 1
     }
-    Copy-Item $src $dst -Force
+    # Create the bin directory here, not rely on step 80 having done it. 80 makes it only
+    # when it installs the guard or the sampler, so under -NoGuard -NoSampler this copy hit
+    # a missing directory and died as a raw DirectoryNotFoundException -- found on the first
+    # real run of that combination.
+    New-Item -ItemType Directory -Force -Path $Ctx.BinDir | Out-Null
+    Copy-Item $src $dst -Force -ErrorAction SilentlyContinue
     if(-not (Test-Path $dst)){
       Fail -Ctx $Ctx -Problem "the monitor did not land at $dst" -Action 'check permissions on the bin directory.' -Code 1
     }

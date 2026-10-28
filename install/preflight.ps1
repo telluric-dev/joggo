@@ -52,6 +52,9 @@ param(
   [string]$Token = '',
   # Only check for gh if the caller actually wants the CLI path.
   [switch]$UseGhCli,
+  # Set by install.ps1 when the run requests no guard, sampler or keepalive task, so an
+  # unelevated slots-only install is not blocked here. Standalone, absent = "you need admin".
+  [switch]$NoAdminNeeded,
   [string]$ConfigFile = '',
   [switch]$Json,
   [switch]$Quiet
@@ -339,6 +342,13 @@ if ($null -eq $isAdmin) {
     'Re-run from an elevated PowerShell: Start-Process powershell -Verb RunAs'
 } elseif ($isAdmin) {
   Add-Check admin pass 'running elevated'
+} elseif ($NoAdminNeeded) {
+  # install.ps1 sets this when the run asks for none of the Windows-side tasks. Without it,
+  # this check blocked exactly the unelevated slots-only installs that install.ps1's own
+  # elevation gate had been fixed to allow -- the installer runs preflight first, so the fix
+  # was unreachable except with -SkipPreflight. The features themselves are proven by use in
+  # the win-features check below, which is the same proof the installer's gate relies on.
+  Add-Check admin pass 'not elevated, and this install requests nothing that needs it (no guard, sampler or keepalive task)'
 } else {
   # Steps 10 (optional features), 80 (scheduled tasks) and 95 (keepalive task) all
   # need it, and 10 is the first thing that runs.
@@ -382,7 +392,12 @@ if ($ramMB -le 0) {
     'The guard thresholds and the slot count are both scaled from RAM. Re-run where Win32_ComputerSystem is readable, or pass -Slots and the guard thresholds explicitly.'
 } else {
   $ramGB = [math]::Round($ramMB / 1024, 1)
-  $recSlots = if ($ramMB -lt (12 * 1024)) { 1 } elseif ($ramMB -le (32 * 1024)) { 2 } else { 3 }
+  # The same function the installer's default and wizard use (install/slots.ps1), so preflight
+  # and the installer cannot recommend different counts again -- they did: 1/2/3 here, 1/2 there.
+  # It sizes from the WSL VM's memory cap, not total RAM, because that is what the slots share.
+  . (Join-Path $PSScriptRoot 'slots.ps1')
+  $slotAdvice = Get-JoggoSlotAdvice -RamMB $ramMB
+  $recSlots = $slotAdvice.slots
   if ($ramMB -lt $MinRamMB) {
     Add-Check ram fail "$ramGB GB RAM -- below the 8 GB minimum" `
       'A runner slot plus its Docker-in-Docker daemon does not fit under 8 GB. Add RAM, or run the runner on another box.'
@@ -390,7 +405,7 @@ if ($ramMB -le 0) {
     Add-Check ram warn "$ramGB GB RAM detected -- guard thresholds will scale, $recSlots slot recommended" `
       'Nothing to do, but expect the memory guard to hold slots under load. docs/memory-pressure.md is the measurement.'
   } else {
-    Add-Check ram pass "$ramGB GB RAM -- $recSlots slots recommended, guard warn/critical will scale to $([int][math]::Round($ramMB*0.15))/$([int][math]::Round($ramMB*0.075)) MB"
+    Add-Check ram pass "$ramGB GB RAM -- guard warn/critical will scale to $([int][math]::Round($ramMB*0.15))/$([int][math]::Round($ramMB*0.075)) MB. Slots: $($slotAdvice.why)"
   }
 }
 
@@ -399,11 +414,16 @@ if ($Slots -gt 0) {
   if ($recSlots -le 0) {
     Add-Check slots warn "-Slots $Slots requested, but RAM is unknown so it cannot be judged" `
       'Resolve the ram check first; the slot count is scaled from RAM.'
+  } elseif ($Slots -gt $slotAdvice.fit) {
+    # Two different overshoots, two different messages. Past what fits by memory is not a
+    # matter of taste: the guard will hold the slots under load and builds will queue.
+    Add-Check slots warn "-Slots $Slots does not fit: the $([math]::Round($slotAdvice.wslMB/1024,1)) GB WSL cap ($($slotAdvice.source)) holds $($slotAdvice.fit) at ~3 GB a slot" `
+      "Use -Slots $recSlots, or raise [wsl2] memory= in %USERPROFILE%\.wslconfig first. $($slotAdvice.why)"
   } elseif ($Slots -gt $recSlots) {
-    Add-Check slots warn "-Slots $Slots exceeds the $recSlots recommended for $([math]::Round($ramMB/1024,1)) GB" `
-      "Each slot is a runner container plus its own dockerd. Use -Slots $recSlots unless you have measured otherwise."
+    Add-Check slots warn "-Slots $Slots fits by memory but is past the $recSlots that has been measured" `
+      "$($slotAdvice.why) Proceeding is a reasonable choice; watch the guard log and job durations after."
   } else {
-    Add-Check slots pass "-Slots $Slots within the $recSlots recommended for this RAM"
+    Add-Check slots pass "-Slots $Slots -- $($slotAdvice.why)"
   }
 }
 
@@ -438,7 +458,7 @@ try {
       "Free a little space on $sysDrive (cleanmgr). This does not block the install: the bulk lands on the VHDX drive, which vhdx-drive checks."
   }
 } catch {
-  # Cannot determine is not fine, but it is not blocking either — the blocking disk
+  # Cannot determine is not fine, but it is not blocking either -- the blocking disk
   # question is vhdx-drive's, and it is asked separately.
   Add-Check disk-system warn "could not determine free space on $sysDrive -- $($_.Exception.Message)" `
     "Check it by hand: Get-PSDrive $($sysDrive.TrimEnd(':')). Only a few GB are needed here; vhdx-drive is the one that matters."

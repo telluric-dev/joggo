@@ -462,7 +462,16 @@ main() {
     # records, try the v6 route first, and hit "network is unreachable" on a box with no v6
     # path. Buildx pushed fine over IPv4; cosign's blob fetch died on v6 — reported 2026-09-13
     # as C-c01, the same egress class as the dind buildkit case, a different host.
-    docker run --rm --name "$RUNNER_C" --network "$NET" \
+    # WHICH UID THE RUNNER RUNS AS. The image's own user is uid 1001, and the volumes were
+    # handed to ghrunner's uid above. The installer creates ghrunner as 1001 so these agree and
+    # the image's passwordless sudo keeps working. If ghrunner is anything else on this box,
+    # run the container AS that uid -- otherwise it cannot write its own runner root and the
+    # slot crash-loops on "run-helper.sh: Permission denied" (rc=127), which is what a fresh
+    # install did before ghrunner was pinned to 1001.
+    local run_uid user_args=()
+    run_uid="$(id -u ghrunner 2>/dev/null || echo 1001)"
+    [ "$run_uid" != "1001" ] && user_args=(--user "${run_uid}:${run_uid}")
+    docker run --rm --name "$RUNNER_C" --network "$NET" "${user_args[@]}" \
         --sysctl net.ipv6.conf.all.disable_ipv6=1 \
         -e DOCKER_HOST=tcp://dind:2375 \
         -e RUNNER_ALLOW_RUNASROOT=0 \

@@ -212,6 +212,9 @@ function Invoke-JoggoPreflight {
     if($Cfg.repo)  { $pfArgs['Repo']   = $Cfg.repo }
     if($Cfg.distro){ $pfArgs['Distro'] = $Cfg.distro }
     if($Cfg.slots) { $pfArgs['Slots']  = [int]$Cfg.slots }
+    # Keep preflight's admin check in step with the elevation gate below: nothing
+    # Windows-side requested means nothing that needs elevation.
+    if(-not $Cfg.guard -and -not $Cfg.sampler -and -not $Cfg.startOnBoot){ $pfArgs['NoAdminNeeded'] = $true }
   }
   if($PfToken){ $pfArgs['Token'] = $PfToken }
 

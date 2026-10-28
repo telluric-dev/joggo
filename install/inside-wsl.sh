@@ -37,6 +37,13 @@ ok()   { printf 'ok: %s\n' "$*"; }
 skip() { printf 'already done: %s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 
+# Every log this script writes lives here, not in /tmp. Ubuntu's systemd-tmpfiles empties /tmp
+# at boot, and the memory guard restarts the VM under pressure -- so on the first real runs a
+# failed image build and a failed deregistration both pointed at logs that no longer existed.
+# The evidence has to outlive the failure it explains. Kept by uninstall, with the job logs.
+LOGS=/var/log/joggo
+mkdir -p "$LOGS" 2>/dev/null || true
+
 # Every failure names the problem AND the action. There is no bare-die path.
 die() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -257,11 +264,28 @@ phase_wsl_conf() {
 
 phase_runner_user() {
   read_cfg
+  # UID 1001, ON PURPOSE. The runner image (ghcr.io/actions/actions-runner) runs as its own
+  # user `runner`, uid 1001, and grants it passwordless sudo -- which workflows use
+  # (`sudo apt-get install ...`). The slot hands its volumes to this user's uid. On the box
+  # this was extracted from, ghrunner happened to BE 1001, so the two matched by accident.
+  # On a fresh distro useradd picks 1000, the volumes were owned by 1000, the container wrote
+  # as 1001, and every slot crash-looped on its first write:
+  #   cp: cannot create regular file '.../run-helper.sh': Permission denied   (rc=127)
+  # Found on the first real end-to-end run. If 1001 is taken, the slot falls back to running
+  # the container as whatever uid this user gets -- that works, except sudo inside jobs.
+  local want_uid=1001
   if id "$RUNNER_USER" >/dev/null 2>&1; then
     skip "user $RUNNER_USER exists (uid $(id -u "$RUNNER_USER"))"
+    [ "$(id -u "$RUNNER_USER")" = "$want_uid" ] || warn "$RUNNER_USER is uid $(id -u "$RUNNER_USER"), not $want_uid (the runner image's user). Slots will run their container as uid $(id -u "$RUNNER_USER"); jobs that use sudo will fail. Not changing an existing user's uid."
   else
-    useradd -m -s /bin/bash "$RUNNER_USER" \
-      || die "could not create user $RUNNER_USER" "create it by hand: useradd -m -s /bin/bash $RUNNER_USER"
+    if getent passwd "$want_uid" >/dev/null 2>&1; then
+      warn "uid $want_uid is already $(getent passwd "$want_uid" | cut -d: -f1); creating $RUNNER_USER with the next free uid. Jobs that use sudo will fail on this box."
+      useradd -m -s /bin/bash "$RUNNER_USER" \
+        || die "could not create user $RUNNER_USER" "create it by hand: useradd -m -s /bin/bash $RUNNER_USER"
+    else
+      useradd -m -s /bin/bash -u "$want_uid" "$RUNNER_USER" \
+        || die "could not create user $RUNNER_USER" "create it by hand: useradd -m -s /bin/bash -u $want_uid $RUNNER_USER"
+    fi
     id "$RUNNER_USER" >/dev/null 2>&1 \
       || undetermined "whether user $RUNNER_USER was created (useradd exited 0 but id does not find it)" \
                       "check /etc/passwd and NSS configuration in this distro"
@@ -273,6 +297,23 @@ phase_runner_user() {
   mkdir -p "$RUNNER_ROOT"
   chown "$RUNNER_USER:$RUNNER_USER" "/home/$RUNNER_USER" "$RUNNER_ROOT"
   ok "$RUNNER_ROOT owned by $RUNNER_USER"
+}
+
+# Does this DNS server answer an A query for github.com within 3 seconds? A real query over
+# UDP, not a ping: a server can be reachable and refuse to resolve, and only the answer
+# counts. python3 is in Ubuntu's base image, so this needs no new package.
+dns_answers() {
+  python3 - "$1" <<'PY' >/dev/null 2>&1
+import socket, struct, sys, random
+qid = random.randint(0, 65535)
+q = struct.pack('>HHHHHH', qid, 0x0100, 1, 0, 0, 0)
+q += b''.join(bytes([len(p)]) + p.encode() for p in 'github.com'.split('.')) + b'\x00' + struct.pack('>HH', 1, 1)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(3)
+s.sendto(q, (sys.argv[1], 53))
+r, _ = s.recvfrom(512)
+rid, flags, _, an = struct.unpack('>HHHH', r[:8])
+sys.exit(0 if rid == qid and (flags & 0x000F) == 0 and an > 0 else 1)
+PY
 }
 
 phase_docker() {
@@ -319,12 +360,12 @@ phase_docker() {
     command -v curl >/dev/null 2>&1 || die "curl is not installed in the distro" "apt-get update && apt-get install -y curl, then re-run"
     curl -fsSL https://get.docker.com -o /tmp/get-docker.sh \
       || die "could not download the Docker install script" "check network from inside the distro: curl -I https://get.docker.com"
-    sh /tmp/get-docker.sh >/tmp/joggo-docker-install.log 2>&1 \
-      || die "the Docker install script failed (see /tmp/joggo-docker-install.log)" "read that log; the usual cause is apt being held by another process"
+    sh /tmp/get-docker.sh >$LOGS/docker-install.log 2>&1 \
+      || die "the Docker install script failed (see $LOGS/docker-install.log)" "read that log; the usual cause is apt being held by another process"
     rm -f /tmp/get-docker.sh
     command -v dockerd >/dev/null 2>&1 \
       || undetermined "whether Docker Engine installed (the script exited 0 but dockerd is not on PATH)" \
-                      "read /tmp/joggo-docker-install.log"
+                      "read $LOGS/docker-install.log"
     ok "Docker Engine installed"
   fi
 
@@ -373,6 +414,54 @@ phase_docker() {
     *)      ok "docker CLI resolves to $cli, not the host's" ;;
   esac
 
+  # CONTAINER DNS. Current WSL tunnels DNS: /etc/resolv.conf says 10.255.255.254, which is
+  # bound inside the distro and does NOT answer from Docker's bridge network. Docker copies
+  # resolv.conf into every container, so on a fresh install every build failed at its first
+  # network step -- measured: "Temporary failure resolving 'archive.ubuntu.com'", 30s a
+  # lookup, six minutes of apt timeouts before the runner image build gave up. The machine
+  # this was extracted from had /etc/docker/daemon.json {"dns": [...]} set by hand at some
+  # point, which is why it never showed there.
+  #
+  # Acts only when BOTH hold: every resolv.conf nameserver is one containers cannot reach
+  # (loopback or the tunnel address), and daemon.json does not already set dns -- an
+  # operator's own DNS choice is left alone. Candidates come from Windows (the adapters
+  # that are up, then 1.1.1.1/8.8.8.8) and each is QUERIED before it is written: a server
+  # on a disconnected adapter is still advertised and simply times out.
+  local unreachable=yes n
+  for n in $(awk '/^nameserver/{print $2}' /etc/resolv.conf 2>/dev/null); do
+    case "$n" in 127.*|10.255.255.254) ;; *) unreachable=no ;; esac
+  done
+  if grep -qs '"dns"' /etc/docker/daemon.json; then
+    skip "container DNS: /etc/docker/daemon.json already sets dns -- left as configured"
+  elif [ "$unreachable" = "no" ]; then
+    skip "container DNS: the distro's resolver is reachable from containers; docker's default is fine"
+  else
+    local good="" c
+    for c in $(printf '%s' "${CFG_dockerDns:-1.1.1.1,8.8.8.8}" | tr ',' ' '); do
+      if dns_answers "$c"; then good="$good $c"; else say "container DNS: $c did not answer a query -- skipped"; fi
+    done
+    [ -n "$good" ] || die "no DNS server answered from inside the distro (tried: ${CFG_dockerDns:-1.1.1.1,8.8.8.8})" \
+      "check the network, or set dockerDns in the config to servers this network can reach, and re-run"
+    python3 - $good <<'PY' || die "could not write /etc/docker/daemon.json" "write {\"dns\": [...]} into it by hand, then: systemctl restart docker"
+import json, os, sys
+p = '/etc/docker/daemon.json'
+d = {}
+if os.path.exists(p):
+    with open(p) as f:
+        txt = f.read().strip()
+        d = json.loads(txt) if txt else {}
+d['dns'] = sys.argv[1:]
+os.makedirs('/etc/docker', exist_ok=True)
+with open(p, 'w') as f:
+    json.dump(d, f, indent=2)
+    f.write('\n')
+PY
+    systemctl restart docker >/dev/null 2>&1 || true
+    [ "$(systemctl is-active docker 2>/dev/null)" = "active" ] \
+      || die "docker did not come back after setting its DNS" "journalctl -u docker -n 50 --no-pager; the daemon.json just written may be the cause"
+    ok "container DNS:$good written to /etc/docker/daemon.json (WSL's tunnelled resolver is unreachable from containers)"
+  fi
+
   # Disk hygiene. A full disk presents as random build failures, and this box
   # fills it with build cache rather than with anything a human put there.
   if [ ! -x /etc/cron.weekly/docker-prune ]; then
@@ -415,15 +504,15 @@ phase_dns_aaaa() {
 
   if ! command -v dnsmasq >/dev/null 2>&1; then
     say "installing dnsmasq (the drop-in needs it) and dig (so the effect can be measured)"
-    DEBIAN_FRONTEND=noninteractive apt-get update >/tmp/joggo-dns-apt.log 2>&1 || true
-    DEBIAN_FRONTEND=noninteractive apt-get install -y dnsmasq dnsutils >>/tmp/joggo-dns-apt.log 2>&1 \
-      || die "could not install dnsmasq (see /tmp/joggo-dns-apt.log)" "apt-get install -y dnsmasq dnsutils, then re-run"
+    DEBIAN_FRONTEND=noninteractive apt-get update >$LOGS/dns-apt.log 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y dnsmasq dnsutils >>$LOGS/dns-apt.log 2>&1 \
+      || die "could not install dnsmasq (see $LOGS/dns-apt.log)" "apt-get install -y dnsmasq dnsutils, then re-run"
     command -v dnsmasq >/dev/null 2>&1 \
-      || undetermined "whether dnsmasq installed (apt exited 0 but dnsmasq is not on PATH)" "read /tmp/joggo-dns-apt.log"
+      || undetermined "whether dnsmasq installed (apt exited 0 but dnsmasq is not on PATH)" "read $LOGS/dns-apt.log"
   else
     skip "dnsmasq already installed"
     command -v dig >/dev/null 2>&1 \
-      || DEBIAN_FRONTEND=noninteractive apt-get install -y dnsutils >>/tmp/joggo-dns-apt.log 2>&1 || true
+      || DEBIAN_FRONTEND=noninteractive apt-get install -y dnsutils >>$LOGS/dns-apt.log 2>&1 || true
   fi
   # dig is the instrument the verify step measures with. Without it the effect
   # cannot be checked, and an unmeasurable change is not one to make.
@@ -442,8 +531,8 @@ phase_dns_aaaa() {
   # --test checks syntax AND that this build actually supports filter-AAAA. A
   # dnsmasq without it parses the file and silently does nothing, which is the
   # worst of the three outcomes.
-  dnsmasq --test >/tmp/joggo-dnsmasq-test.log 2>&1 \
-    || { sed -n '1,20p' /tmp/joggo-dnsmasq-test.log >&2
+  dnsmasq --test >$LOGS/dnsmasq-test.log 2>&1 \
+    || { sed -n '1,20p' $LOGS/dnsmasq-test.log >&2
          die "dnsmasq --test rejected the configuration" "read the output above; if it names filter-AAAA, this dnsmasq build does not support it and the drop-in cannot work here"; }
   ok "dnsmasq --test passes, and this build accepts filter-AAAA"
 
@@ -501,6 +590,13 @@ phase_images() {
   else
     local ctx="$STAGE/slots/runner-image"
     [ -f "$ctx/Dockerfile" ] || die "staged slots/runner-image/Dockerfile missing" "re-run the installer"
+    # Fail in two seconds, by name, instead of six minutes of apt timeouts: the build's
+    # first RUN step needs DNS from inside a container. joggo/dind:local is local by now and
+    # ships busybox nslookup, so this costs no pull.
+    docker run --rm --entrypoint sh joggo/dind:local -c 'nslookup github.com >/dev/null 2>&1' \
+      || die "containers cannot resolve names, so the runner image cannot build (apt needs DNS)" \
+             "cat /etc/docker/daemon.json and /etc/resolv.conf; phase docker sets container DNS when WSL tunnels it -- re-run the installer, or set dockerDns in the config"
+    ok "containers resolve names (checked from inside joggo/dind:local)"
     say "building joggo/actions-runner:local from slots/runner-image"
     docker build -t joggo/actions-runner:local "$ctx" >"$LOGS/runner-image-build.log" 2>&1 \
       || die "the runner image build failed (see $LOGS/runner-image-build.log)" \
@@ -555,8 +651,8 @@ phase_runner() {
       || undetermined "whether the runner unpacked (tar exited 0 but config.sh is absent)" "ls -la $RUNNER_ROOT"
     ok "runner $ver unpacked at $RUNNER_ROOT"
     if [ -x "$RUNNER_ROOT/bin/installdependencies.sh" ]; then
-      "$RUNNER_ROOT/bin/installdependencies.sh" >/tmp/joggo-runner-deps.log 2>&1 \
-        || warn "installdependencies.sh failed (see /tmp/joggo-runner-deps.log). The containerised slot supplies its own OS, so this is not fatal here."
+      "$RUNNER_ROOT/bin/installdependencies.sh" >$LOGS/runner-deps.log 2>&1 \
+        || warn "installdependencies.sh failed (see $LOGS/runner-deps.log). The containerised slot supplies its own OS, so this is not fatal here."
     fi
   else
     skip "runner already unpacked at $RUNNER_ROOT"
@@ -606,11 +702,11 @@ install_service_unit() {
     svc="$(tr -d ' \r\n' < "$RUNNER_ROOT/.service")"
     skip "runner service unit already installed ($svc)"
   else
-    ( cd "$RUNNER_ROOT" && ./svc.sh install "$RUNNER_USER" ) >/tmp/joggo-svc-install.log 2>&1 \
-      || die "svc.sh install failed (see /tmp/joggo-svc-install.log)" "read that log; systemd must be running in the distro"
+    ( cd "$RUNNER_ROOT" && ./svc.sh install "$RUNNER_USER" ) >$LOGS/svc-install.log 2>&1 \
+      || die "svc.sh install failed (see $LOGS/svc-install.log)" "read that log; systemd must be running in the distro"
     [ -r "$RUNNER_ROOT/.service" ] \
       || undetermined "the runner service unit name (svc.sh exited 0 but wrote no .service file)" \
-                      "read /tmp/joggo-svc-install.log"
+                      "read $LOGS/svc-install.log"
     svc="$(tr -d ' \r\n' < "$RUNNER_ROOT/.service")"
     ok "runner service unit installed: $svc"
   fi
@@ -622,6 +718,61 @@ install_service_unit() {
         "systemctl disable --now $svc, then re-run"
   fi
   ok "$svc left installed but disabled — it is the one-command rollback from the slot model, not a second runner"
+}
+
+# Every slot this box has, not just the ones the config currently asks for: 1..slots, plus any
+# slot with an enabled unit, a runner root or a pause flag. The config is what the operator
+# WANTS; this is what EXISTS. Removal and retirement have to walk the second, or lowering the
+# count first and uninstalling second leaves the higher slots registered and running.
+all_slots() {
+  {
+    seq 1 "${CFG_slots:-1}"
+    ls /etc/systemd/system/*.wants/ 2>/dev/null | sed -n 's/^joggo-slot@\([0-9]\{1,\}\)\.service$/\1/p'
+    ls -d "/home/${RUNNER_USER}"/actions-runner-[0-9]* 2>/dev/null | sed -n 's#.*/actions-runner-\([0-9]\{1,\}\)$#\1#p'
+    ls /var/lib/joggo-slot/ 2>/dev/null | sed -n 's/^\([0-9]\{1,\}\)\.paused$/\1/p'
+  } | sort -un
+}
+
+# Retire one slot above the configured count -- WITHOUT killing a job. The same three answers
+# slots/slot-pause.sh uses, for the same reason: an unanswerable probe must land on the cheap
+# failure. If a job is running, or nobody can tell, the slot only gets its pause flag, so it
+# takes no new work and finishes what it has; re-running the installer later finishes the
+# retirement. Only a slot that is provably idle is disabled, deregistered and removed.
+retire_slot() {
+  local k="$1" flag="/var/lib/joggo-slot/$1.paused" root="/home/${RUNNER_USER}/actions-runner-$1"
+  local out rc busy
+  out=$(docker top "joggo-runner-$k" 2>&1); rc=$?
+  if [ "$rc" -eq 0 ]; then
+    printf '%s\n' "$out" | grep -q 'Runner\.Worker' && busy=yes || busy=no
+  elif docker info >/dev/null 2>&1 && ! docker ps -a --format '{{.Names}}' | grep -qx "joggo-runner-$k"; then
+    busy=no      # the daemon answers and the slot has no container: nothing can be running in it
+  else
+    busy=unknown
+  fi
+  if [ "$busy" != "no" ]; then
+    mkdir -p /var/lib/joggo-slot
+    [ -e "$flag" ] || printf '%s  retiring: slot count lowered to %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${CFG_slots:-1}" > "$flag"
+    local why="is running a job"
+    [ "$busy" = "unknown" ] && why="could not be probed ($(printf '%s' "$out" | head -1))"
+    warn "slot $k is above the new count of ${CFG_slots:-1} but $why."
+    warn "  it is paused, so it takes no new work and finishes what it has. Re-run the installer afterwards to finish retiring it."
+    return 0
+  fi
+  systemctl disable --now "joggo-slot@${k}.service" >/dev/null 2>&1 || true
+  [ "$(systemctl is-enabled "joggo-slot@${k}.service" 2>/dev/null)" != "enabled" ] \
+    || undetermined "whether joggo-slot@${k} was disabled" "systemctl disable --now joggo-slot@${k}"
+  if [ -r "$root/.credentials" ]; then
+    if [ -n "$CFG_registrationToken" ] && ( cd "$root" && sudo -u "$RUNNER_USER" -H ./config.sh remove --token "$CFG_registrationToken" ) >$LOGS/retire-$k.log 2>&1; then
+      case "$root" in /home/*/actions-runner-[0-9]*) rm -rf -- "$root" ;; esac
+      ok "slot $k retired: disabled, deregistered, runner root removed"
+    else
+      warn "slot $k disabled but NOT deregistered (see $LOGS/retire-$k.log); its root is kept so you can retry:"
+      warn "  sudo -u $RUNNER_USER bash -c 'cd $root && ./config.sh remove --token <TOKEN>'   -- or delete it on the Runners page"
+    fi
+  else
+    ok "slot $k retired: disabled (it had no registration of its own)"
+  fi
+  rm -f "$flag"
 }
 
 phase_slots() {
@@ -692,13 +843,13 @@ phase_slots() {
       fi
       [ -x "$STAGE/slots/add-slot.sh" ] || die "staged slots/add-slot.sh missing" "re-run the installer"
       say "preparing slot $n (copies the runner root, strips the copied credentials)"
-      RUNNER_USER="$RUNNER_USER" "$STAGE/slots/add-slot.sh" "$n" >/tmp/joggo-add-slot-$n.log 2>&1
+      RUNNER_USER="$RUNNER_USER" "$STAGE/slots/add-slot.sh" "$n" >$LOGS/add-slot-$n.log 2>&1
       local rc=$?
       if [ "$rc" != "0" ] && [ "$rc" != "3" ]; then
-        sed -n '1,40p' /tmp/joggo-add-slot-$n.log >&2
-        die "add-slot.sh $n failed (rc=$rc, see /tmp/joggo-add-slot-$n.log)" "read that log; a job in flight is the common refusal — wait for 'joggo-pause status' to read 'job in flight: none'"
+        sed -n '1,40p' $LOGS/add-slot-$n.log >&2
+        die "add-slot.sh $n failed (rc=$rc, see $LOGS/add-slot-$n.log)" "read that log; a job in flight is the common refusal — wait for 'joggo-pause status' to read 'job in flight: none'"
       fi
-      [ -d "$dst" ] || undetermined "whether slot $n's runner root was created" "read /tmp/joggo-add-slot-$n.log"
+      [ -d "$dst" ] || undetermined "whether slot $n's runner root was created" "read $LOGS/add-slot-$n.log"
 
       [ -n "$CFG_registrationToken" ] || die "no token left to register slot $n" "re-run with a fresh -Token"
       # SAME labels so GitHub dispatches the same jobs. DIFFERENT name. NO
@@ -725,6 +876,16 @@ phase_slots() {
     ok "joggo-slot@${n} enabled (read back from systemd; started in step 95)"
     n=$((n+1))
   done
+
+  # LOWERING THE COUNT. This phase only ever added and enabled slots 1..N, so re-running with
+  # -Slots 1 after -Slots 2 left slot 2 enabled, registered and taking jobs: the count could go
+  # up and never down. Anything above N is retired now -- see retire_slot for why a busy slot
+  # is paused rather than stopped.
+  local k
+  for k in $(all_slots); do
+    [ "$k" -gt "${CFG_slots:-1}" ] && retire_slot "$k"
+  done
+  return 0
 }
 
 phase_watchdog() {
@@ -769,11 +930,11 @@ phase_watchdog() {
 
   # Run the watchdog in --check mode. It never acts in that mode, and it proves
   # the thing a timer cannot: that the script resolves a live target and runs.
-  if /usr/local/sbin/runner-watchdog.sh --check >/tmp/joggo-watchdog-check.log 2>&1; then
-    sed -n '1,12p' /tmp/joggo-watchdog-check.log | sed 's/^/    /'
+  if /usr/local/sbin/runner-watchdog.sh --check >$LOGS/watchdog-check.log 2>&1; then
+    sed -n '1,12p' $LOGS/watchdog-check.log | sed 's/^/    /'
     ok "runner-watchdog.sh --check ran clean (it never acts in --check)"
   else
-    sed -n '1,20p' /tmp/joggo-watchdog-check.log | sed 's/^/    /' >&2
+    sed -n '1,20p' $LOGS/watchdog-check.log | sed 's/^/    /' >&2
     warn "runner-watchdog.sh --check exited non-zero. The timer is armed, but the watchdog cannot assess the runner yet — this is expected before any slot has written a Runner_*.log, and must be re-checked after the first job."
   fi
 
@@ -1027,17 +1188,21 @@ phase_verify() {
 # obscurely or leaving the caller thinking it succeeded.
 phase_remove() {
   read_cfg
+  # Counted, and the phase FAILS if it is non-zero. A removal that leaves a runner registered
+  # is not finished, and it must not report itself as finished.
+  local problems=0
   local deep=0
   for a in "$@"; do [ "$a" = "--deep" ] && deep=1; done
 
-  local n="${CFG_slots:-1}"
-  while [ "$n" -ge 1 ]; do
+  # all_slots, not 1..CFG_slots: after the count has been lowered the config no longer
+  # mentions the higher slots, and walking only what it mentions left them behind.
+  local n
+  for n in $(all_slots | sort -rn); do
     local unit="joggo-slot@${n}.service"
     if systemctl cat "$unit" >/dev/null 2>&1; then
       systemctl disable --now "$unit" >/dev/null 2>&1 || true
       say "disabled $unit"
     fi
-    n=$((n-1))
   done
 
   for u in runner-watchdog.timer runner-watchdog.service rerun-after-reboot.service; do
@@ -1048,31 +1213,45 @@ phase_remove() {
   systemctl daemon-reload
   say "units removed"
 
-  # Deregister every slot that has its own registration.
-  n=1
-  while [ "$n" -le "${CFG_slots:-1}" ]; do
+  # The runner service unit FIRST, if svc.sh installed one -- BEFORE deregistering. GitHub's
+  # config.sh refuses to unconfigure a runner whose service is still installed, and slot 1
+  # is the only slot with one (the disabled rollback unit). This used to run AFTER the
+  # deregistration loop: on the first real uninstall slot 2 deregistered and slot 1 did not,
+  # leaving "joggo" on the Runners page while the uninstall reported success.
+  if [ -r "$RUNNER_ROOT/.service" ]; then
+    ( cd "$RUNNER_ROOT" && ./svc.sh uninstall ) >"$LOGS/svc-uninstall.log" 2>&1 || true
+    if [ -r "$RUNNER_ROOT/.service" ]; then
+      warn "svc.sh uninstall did not remove $RUNNER_ROOT/.service (see $LOGS/svc-uninstall.log); slot 1's deregistration may be refused"
+      problems=$((problems+1))
+    else
+      say "runner service unit uninstalled"
+    fi
+  fi
+
+  # Deregister every slot that has its own registration -- every slot that EXISTS.
+  # Logs go to $LOGS, not /tmp: the first real uninstall lost both of its logs, so the one
+  # failure it had could not be explained afterwards.
+  for n in $(all_slots); do
     local root
     if [ "$n" = "1" ]; then root="$RUNNER_ROOT"; else root="/home/${RUNNER_USER}/actions-runner-${n}"; fi
     if [ ! -r "$root/.credentials" ]; then
       skip "slot $n is not registered"
     elif [ -n "$CFG_registrationToken" ]; then
-      ( cd "$root" && sudo -u "$RUNNER_USER" -H ./config.sh remove --token "$CFG_registrationToken" ) >/tmp/joggo-remove-$n.log 2>&1 \
-        && ok "slot $n deregistered" \
-        || warn "slot $n deregistration failed (see /tmp/joggo-remove-$n.log). It will linger as an OFFLINE entry; remove it on the Runners page by hand."
+      if ( cd "$root" && sudo -u "$RUNNER_USER" -H ./config.sh remove --token "$CFG_registrationToken" ) >"$LOGS/remove-$n.log" 2>&1; then
+        ok "slot $n deregistered"
+      else
+        warn "slot $n deregistration FAILED: $(grep -m1 -iE 'error|cannot|refus|fail' "$LOGS/remove-$n.log" | cut -c1-160)"
+        warn "  full log: $LOGS/remove-$n.log. It will linger as an OFFLINE entry; remove it on the Runners page by hand."
+        problems=$((problems+1))
+      fi
     else
       warn "slot $n NOT deregistered: no fresh token was given."
       warn "  Deregistration needs a NEW registration token — the one used at install has expired."
       warn "  Mint one, then: sudo -u $RUNNER_USER bash -c 'cd $root && ./config.sh remove --token <TOKEN>'"
       warn "  Or delete the runner on the Runners page. Skipping it leaves an offline entry that blocks the same name later."
+      problems=$((problems+1))
     fi
-    n=$((n+1))
   done
-
-  # The runner service unit, if svc.sh installed one.
-  if [ -r "$RUNNER_ROOT/.service" ]; then
-    ( cd "$RUNNER_ROOT" && ./svc.sh uninstall ) >/dev/null 2>&1 || true
-    say "runner service unit uninstalled"
-  fi
 
   # Docker objects the slots own. ONLY by their deterministic names: this box
   # also runs the operator's dev databases and a broad prune would eat them.
@@ -1111,16 +1290,19 @@ phase_remove() {
 
   if [ "$deep" = "1" ]; then
     warn "--deep: removing the runner roots and the docker package"
-    n=1
-    while [ "$n" -le "${CFG_slots:-1}" ]; do
+    for n in $(all_slots); do
       if [ "$n" = "1" ]; then rm -rf "$RUNNER_ROOT"; else rm -rf "/home/${RUNNER_USER}/actions-runner-${n}"; fi
-      n=$((n+1))
     done
     systemctl disable --now docker >/dev/null 2>&1 || true
     say "docker disabled. The package and the distro are left in place: removing them is a Windows-side decision."
   else
     say "the distro, Docker and the runner roots are left alone (pass -Deep to remove the roots too)"
   fi
+  if [ "$problems" -gt 0 ]; then
+    warn "$problems problem(s) above: the removal is NOT complete. Logs: $LOGS"
+    return 1
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------- dispatch

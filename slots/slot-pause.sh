@@ -114,8 +114,39 @@ need_root() {
 # The Runner.Worker process exists only while a job is executing, so this is an exact
 # answer to "is a job in flight", not a guess from log tailing. Read with `docker top`
 # rather than `docker exec` so it still works if the container is unresponsive.
+#
+# THREE ANSWERS, NOT TWO, AND THE DIFFERENCE DECIDES WHETHER A BUILD DIES.
+#
+# This used to be one line:
+#     docker top "$RUNNER_C" 2>/dev/null | grep -q 'Runner\.Worker'
+# which returns FALSE both when no job is running AND when `docker top` could not answer
+# at all. False falls through to the idle branch of `pause`, which stops the listener --
+# so an unanswerable probe stopped a container with a live job inside it. In the original
+# of this script that killed a production build mid-step, while the memory guard's own
+# host-wide count said two jobs were running. `docker top` fails most often three minutes
+# into a VM restart under memory pressure, which is exactly when the guard pauses slots,
+# so the two conditions are correlated rather than a rare race.
+#
+# The fix is not a better probe; the next probe will also fail sometimes. It is that the
+# failure has to land on the NON-destructive branch: not pausing costs a delay, wrongly
+# stopping costs a build. Asymmetric costs, so the ambiguous read falls toward the cheap one.
+#
+#   0  a worker is running          -> drain; leave the job alone
+#   1  daemon answered, no worker   -> genuinely idle; safe to stop the listener
+#   2  daemon did not answer        -> CANNOT TELL; never read this as idle
+#
+# 2>&1, not 2>/dev/null: why the probe failed is the one piece of evidence that separates
+# a dead daemon from a vanished container, and the old line threw it away.
+PROBE_ERR=""
 job_in_flight() {
-    docker top "$RUNNER_C" 2>/dev/null | grep -q 'Runner\.Worker'
+    local out rc
+    out=$(docker top "$RUNNER_C" 2>&1); rc=$?
+    if [ "$rc" -ne 0 ]; then
+        PROBE_ERR=$(printf '%s' "$out" | head -1)
+        return 2
+    fi
+    printf '%s\n' "$out" | grep -q 'Runner\.Worker' && return 0
+    return 1
 }
 
 # The runner floods the journal with per-process WORKER debug lines while a job runs, so the
@@ -205,7 +236,13 @@ status)
     say "unit $UNIT: $(systemctl is-active "$UNIT" 2>/dev/null || echo unknown)"
     ctrs="$(slot_containers)"
     say "slot containers: ${ctrs:-none}"
-    if job_in_flight; then say "job in flight: $(current_job)"; else say "job in flight: none"; fi
+    # "I could not tell" is its own state. Printing "none" for an unanswerable probe is how an
+    # operator -- or a guard reading this output -- concludes a slot is safe to stop.
+    job_in_flight; case $? in
+      0) say "job in flight: $(current_job)" ;;
+      1) say "job in flight: none" ;;
+      2) say "job in flight: CANNOT TELL — docker top did not answer: ${PROBE_ERR:-no detail}" ;;
+    esac
     mem_report
     wslconfig_note
     ;;
@@ -228,8 +265,29 @@ pause)
     printf '%s  %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${REASON:-paused by $(logname 2>/dev/null || echo root)}" > "$PAUSE_FLAG"
     say "flag set: $PAUSE_FLAG"
 
-    if job_in_flight; then
+    job_in_flight; flight_rc=$?
+
+    # CANNOT TELL. The flag is already written above, so the hold still takes effect at the
+    # next job boundary -- which is all a hold was ever for. What we refuse to do is stop the
+    # listener on a guess. --now still overrides: an operator saying "stop it anyway" is a
+    # decision, and this is only a default.
+    if [ "$flight_rc" = "2" ] && [ "$FORCE_NOW" != "1" ]; then
+        warn "CANNOT TELL whether a job is running — docker top did not answer:"
+        warn "    ${PROBE_ERR:-no detail}"
+        warn "The flag IS set, so this slot holds at the next job boundary and takes no new work."
+        warn "The listener is being LEFT RUNNING deliberately: an unanswerable probe must not be"
+        warn "read as 'idle'. If you know the slot is idle and want it stopped now, re-run with --now."
+        mem_report
+        wslconfig_note
+        exit 0
+    fi
+
+    if [ "$flight_rc" = "0" ] || { [ "$flight_rc" = "2" ] && [ "$FORCE_NOW" = "1" ]; }; then
         job="$(current_job)"
+        if [ "$flight_rc" = "2" ]; then
+            warn "--now with an UNANSWERABLE probe: stopping the listener without knowing whether"
+            warn "a job is running. If one is, GitHub will report it as failed."
+        fi
         if [ "$FORCE_NOW" = "1" ]; then
             warn "--now: stopping a job that is CURRENTLY RUNNING — GitHub will report it as failed:"
             warn "    ${job:-<unknown job>}"

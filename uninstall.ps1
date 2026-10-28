@@ -151,8 +151,15 @@ if(-not (Confirm-Joggo -Ctx $ctx -Question 'Proceed?')){
   Exit-Joggo -Ctx $ctx -Code 0
 }
 
-if(-not (Test-Admin)){
-  Fail -Ctx $ctx -Problem 'not running as Administrator' -Action 'unregistering SYSTEM scheduled tasks needs elevation. Re-run in an elevated PowerShell.' -Code 1
+# Elevation only if there is something that needs it: joggo's SYSTEM scheduled tasks. This
+# used to be unconditional, the same mistake the installer's gate had -- so an install that
+# needed no elevation (slots only: no guard, sampler or keepalive task) could not be REMOVED
+# without it. Found on the first real uninstall. Everything else here -- the distro side and
+# C:\ProgramData\joggo, which an unelevated install created -- needs no admin.
+$joggoTasks = @(Get-ScheduledTask -TaskName 'joggo*' -ErrorAction SilentlyContinue)
+if($joggoTasks.Count -gt 0 -and -not (Test-Admin)){
+  Fail -Ctx $ctx -Problem ("not running as Administrator, and {0} joggo scheduled task(s) exist: {1}" -f $joggoTasks.Count, (($joggoTasks | ForEach-Object TaskName) -join ', ')) `
+    -Action 'unregistering SYSTEM scheduled tasks needs elevation. Re-run in an elevated PowerShell.' -Code 1
 }
 
 # ---------------------------------------------------------------- 1. tasks
@@ -211,6 +218,18 @@ if(Test-Path $ctx.ConfigPath){
 if(Test-Path $ctx.BinDir){
   Remove-Item -Path $ctx.BinDir -Recurse -Force -ErrorAction SilentlyContinue
   if(Test-Path $ctx.BinDir){ Warn $ctx "could not remove $($ctx.BinDir)" } else { Ok $ctx "removed $($ctx.BinDir)" }
+}
+# The supervisor brief that step 97 rendered. It is STATE (this box's paths and thresholds),
+# not evidence, and a brief describing a runner that no longer exists would send an agent
+# looking for one. Left behind by every uninstall until the first real one showed it.
+$brief = Join-Path $ctx.DataDir 'SUPERVISOR.md'
+if(Test-Path $brief){
+  Remove-Item -Path $brief -Force -ErrorAction SilentlyContinue
+  if(Test-Path $brief){ Warn $ctx "could not remove $brief" } else { Ok $ctx "removed $brief" }
+}
+# The directory itself, when nothing is left in it. With the trail present it stays.
+if((Test-Path $ctx.DataDir) -and -not (Get-ChildItem $ctx.DataDir -Force -ErrorAction SilentlyContinue)){
+  Remove-Item -Path $ctx.DataDir -Force -ErrorAction SilentlyContinue
 }
 Say $ctx "kept: the memory trail and snapshots under $($ctx.DataDir). They are evidence, not state — delete them yourself if you want them gone."
 

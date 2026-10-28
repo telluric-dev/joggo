@@ -24,6 +24,39 @@ missing $RUNNER_ROOT/.credentials — this slot reuses the EXISTING registration
 
 **A slot is a registration, not a unit instance.** Everything else is already per-slot.
 
+## How many slots
+
+The easy way to set it is the installer: `-Slots N` on a first install, and **the same flag on a
+re-run to change it — up or down**. Raising registers and enables the new slots. Lowering retires
+the extra ones: an idle slot is disabled, deregistered and its runner root removed; a slot that
+is running a job (or that cannot be probed) is only paused, so it finishes that job and takes no
+more — re-run once it is idle to finish retiring it. Nothing kills a job to change the count.
+Re-running needs a fresh registration token either way, because retiring deregisters.
+
+What to pick. Every slot runs inside the one WSL2 VM, so the limit is that VM's memory cap —
+`[wsl2] memory=` in `%USERPROFILE%\.wslconfig`, or **half of RAM** if it is not set — not the
+machine's RAM. Measured on a 16 GB box: the VM idles at ~0.6 GB, a runner container holds ~1.25 GB
+during a job, and an image build through the slot's own dockerd peaks around 3–4 GB. So a slot is
+budgeted at **3 GB on a 1 GB base**:
+
+| Machine (default WSL cap = half) | Fits by memory | Recommended | Why |
+|---|---|---|---|
+| 8 GB (4 GB cap) | 1 | **1** | one job and its daemon through a build |
+| 12 GB (6 GB cap) | 1 | **1** | a second slot would keep the guard holding under load |
+| 16 GB (8 GB cap) | 2 | **2** | the measured configuration |
+| 32 GB (16 GB cap) | 5 | **2**, then measure | the disk saturates before memory does |
+| 64 GB (32 GB cap) | 10 | **2**, then measure | same — nothing above 2 has been run here |
+
+Why it stops at two: with a *single* job running, 30–40% of tasks on the measured box were
+stalled on disk IO (below). A third slot on the same disk adds contention before it adds
+throughput, and this repository has no measurement of three. If you have the RAM, going higher is
+a reasonable experiment — add one slot at a time and watch `wsl-mem-guard.log` and job durations.
+
+`.\install.ps1 -PreflightOnly` prints the recommendation for your box and why; the wizard shows
+the same sentence before it asks. Preflight warns if `-Slots` exceeds what fits, and separately
+(more mildly) if it fits but exceeds what has been measured. Both come from one function,
+`install/slots.ps1`.
+
 ## Why this is mostly free
 
 `run-containerized-slot.sh` keys almost everything on `$SLOT` already, so there is **no

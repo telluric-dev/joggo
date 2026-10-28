@@ -18,7 +18,7 @@
   reached the runner yet — the one thing the journal can't see); gh being
   missing / unauthed / offline just leaves that section empty, never an error.
 
-  Usage: powershell -ExecutionPolicy Bypass -File tools\deploy-monitor.ps1 [-Repo example-org/appone]
+  Usage: powershell -ExecutionPolicy Bypass -File monitor\deploy-monitor.ps1 [-Repo owner/name]
 #>
 param(
   [string]$Repo = "example-org/appone",
@@ -40,6 +40,15 @@ param(
   # joggo-pause was never installed.
   [string]$PauseFlag = "/var/lib/joggo-slot/1.paused",
   [string]$PauseCmd = "/usr/local/sbin/joggo-pause",
+  # Where the slots' _diag directories are bind-mounted on the host, one <n>/_diag per slot.
+  # Every job's repo, run id, workflow and commit are read out of the Worker_*.log files
+  # here. It was hardcoded, while every other path above was a parameter -- so pointed at a
+  # runner laid out differently, the monitor found no worker logs and labelled every row of
+  # its history "repo?". Must match DIAG_DIR in slots/run-containerized-slot.sh.
+  [string]$DiagRoot = "/var/log/joggo-slots",
+  # The per-slot status script, as WSL sees it. Empty means: the repo checkout's
+  # slots/slots-status.sh, else the installed /usr/local/sbin/joggo-slots-status.
+  [string]$SlotStatusCmd = "",
   # Journal read window. See the comment at $since in Get-JournalDeploys for why this is 24h
   # and not 14 days, with the timings that decided it.
   [string]$JournalWindow = "24 hours ago",
@@ -345,7 +354,7 @@ function Get-WorkerMeta {
   # Now with MTIME, which is the only honest liveness signal available out here: the runner
   # writes to this log continuously while the job runs. `stat` prints in argument order, so
   # `ls -t`'s newest-first ordering survives the pipe.
-  $ls=$null; try { $ls=& wsl.exe -d $WslDistro -u root bash -c 'ls -t /home/ghrunner/actions-runner/_diag/Worker_*.log /var/log/joggo-slots/*/_diag/Worker_*.log 2>/dev/null | head -150 | xargs -r stat -c %Y:%n' 2>$null } catch {}
+  $ls=$null; try { $ls=& wsl.exe -d $WslDistro -u root bash -c "ls -t /home/ghrunner/actions-runner/_diag/Worker_*.log $DiagRoot/*/_diag/Worker_*.log 2>/dev/null | head -150 | xargs -r stat -c %Y:%n" 2>$null } catch {}
   $files=@(); $mtOf=@{}
   foreach($ln in @($ls)){
     if($ln -match '^(\d+):(.+Worker_\d{8}-\d{6}-utc\.log)$'){
@@ -360,7 +369,8 @@ function Get-WorkerMeta {
   # created per slot, so the number is authoritative; the persistent runner's own _diag has no
   # slot and reports $null rather than pretending to be slot 1.
   $slotOf=@{}
-  foreach($fp in $files){ $slotOf[$fp]=$(if($fp -match '/joggo-slots/(\d+)/_diag/'){ [int]$matches[1] }else{ $null }) }
+  $slotRx = [regex]::Escape($DiagRoot.TrimEnd('/')) + '/(\d+)/_diag/'
+  foreach($fp in $files){ $slotOf[$fp]=$(if($fp -match $slotRx){ [int]$matches[1] }else{ $null }) }
   # Stamp liveness and slot onto whatever the cache hands back, on EVERY call.
   $stamp={ param($e,$fp) if($e){ $e.mtime=$mtOf[$fp]; $e.slot=$slotOf[$fp] }; $e }
   # Re-read a log until BOTH planId and repo are known, not just planId.
@@ -1539,20 +1549,38 @@ $script:runnerLine=''
 # Same fallback chain as Get-QueueRepos, for the same reason: $PSScriptRoot is empty under
 # -Command and when dot-sourced. Failing soft here is worse than failing loudly -- it costs
 # the slots strip and says nothing, leaving a card that looks exactly like the old one.
+#
+# THE STRIP NEVER APPEARED ON ANY INSTALL. This looked for 'joggo-slots-status.sh' beside this
+# file -- a name from before the repo was laid out. The script is slots/slots-status.sh, and
+# the installer stages only deploy-monitor.ps1 into its bin directory, so neither a checkout
+# nor an install ever had the file here. Found by running the monitor against a live runner.
+#
+# Resolution order now:
+#   1. -SlotStatusCmd, if given: a path as WSL sees it. For a runner laid out differently.
+#   2. The repo checkout: slots/slots-status.sh, one level up from monitor/.
+#   3. The installed command, /usr/local/sbin/joggo-slots-status -- what an install leaves,
+#      rendered for that box. If it is absent the read fails and the strip is skipped, which
+#      is the same soft failure as before but now the uncommon case rather than every case.
 $script:SlotScriptWsl = $null
-try {
-  $root=$PSScriptRoot
-  if(-not $root -and $PSCommandPath){ $root=Split-Path -Parent $PSCommandPath }
-  if(-not $root -and $MyInvocation.MyCommand.Path){ $root=Split-Path -Parent $MyInvocation.MyCommand.Path }
-  if($root){
-    $sp = Join-Path $root 'joggo-slots-status.sh'
-    # A drive letter, not a UNC path: /mnt/<letter> has no meaning for \\server\share, and a
-    # checkout there would need a mount this box does not have. Leave it $null and skip the strip.
-    if((Test-Path $sp) -and $sp -match '^[A-Za-z]:'){
-      $script:SlotScriptWsl = '/mnt/' + $sp.Substring(0,1).ToLower() + ($sp.Substring(2) -replace '\\','/')
+if($SlotStatusCmd){ $script:SlotScriptWsl = $SlotStatusCmd }
+else {
+  try {
+    $root=$PSScriptRoot
+    if(-not $root -and $PSCommandPath){ $root=Split-Path -Parent $PSCommandPath }
+    if(-not $root -and $MyInvocation.MyCommand.Path){ $root=Split-Path -Parent $MyInvocation.MyCommand.Path }
+    if($root){
+      foreach($sp in @((Join-Path $root 'slots-status.sh'), (Join-Path (Split-Path $root -Parent) 'slots\slots-status.sh'))){
+        # A drive letter, not a UNC path: /mnt/<letter> has no meaning for \\server\share, and a
+        # checkout there would need a mount this box does not have.
+        if((Test-Path $sp) -and $sp -match '^[A-Za-z]:'){
+          $script:SlotScriptWsl = '/mnt/' + $sp.Substring(0,1).ToLower() + ($sp.Substring(2) -replace '\\','/')
+          break
+        }
+      }
     }
-  }
-} catch {}
+  } catch {}
+  if(-not $script:SlotScriptWsl){ $script:SlotScriptWsl = '/usr/local/sbin/joggo-slots-status' }
+}
 $script:slotStates=@()
 $script:gatherOp=$null
 $script:lastGoodStamp=''
@@ -1571,9 +1599,14 @@ function New-IoRunspace([string]$SrcPath){
   $rs=[runspacefactory]::CreateRunspace(); $rs.Open()
   $init=[powershell]::Create(); $init.Runspace=$rs
   [void]$init.AddScript(@'
-param($defs,$distro,$runnerSvc,$slotSvc,$pauseFlag,$journalWindow,$slotScript)
+param($defs,$distro,$runnerSvc,$slotSvc,$pauseFlag,$journalWindow,$slotScript,$diagRoot)
 $WslDistro=$distro; $RunnerService=$runnerSvc; $SlotService=$slotSvc; $PauseFlag=$pauseFlag
 $SlotScriptWsl=$slotScript
+# Same trap, second time: -DiagRoot was added as a script parameter on 2026-10-28 and, for one
+# test run, not handed across here. Get-WorkerMeta called $DiagRoot.TrimEnd() on $null, the
+# worker threw, and the window sat on "poll retrying" with every count at a dash. Any new
+# parameter an I/O function reads must be added to this param() AND to the AddArgument chain.
+$DiagRoot=$diagRoot
 # EVERY parameter Get-JournalDeploys reads has to be handed across explicitly -- the runspace
 # shares no scope with the script. $JournalWindow was added on 2026-09-14 and NOT added here,
 # so inside the worker it was $null: the poll ran `journalctl --since ''`, which errors to a
@@ -1583,7 +1616,7 @@ $SlotScriptWsl=$slotScript
 $JournalWindow=$journalWindow
 $script:wmCache=@{}; $script:wmRetry=@{}
 Invoke-Expression $defs
-'@).AddArgument($defs).AddArgument($WslDistro).AddArgument($RunnerService).AddArgument($SlotService).AddArgument($PauseFlag).AddArgument($JournalWindow).AddArgument($script:SlotScriptWsl)
+'@).AddArgument($defs).AddArgument($WslDistro).AddArgument($RunnerService).AddArgument($SlotService).AddArgument($PauseFlag).AddArgument($JournalWindow).AddArgument($script:SlotScriptWsl).AddArgument($DiagRoot)
   [void]$init.Invoke(); $init.Dispose()
   return $rs
 }

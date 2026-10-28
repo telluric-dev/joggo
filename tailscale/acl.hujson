@@ -1,6 +1,6 @@
-// Tailscale ACL policy for the self-hosted CI runner ("marathon").
+// Tailscale ACL policy for the self-hosted CI runner ("joggo").
 //
-// Companion to ../self-hosted-marathon-runner-setup.md (Step 3.3). Paste this into the
+// Companion to ../self-hosted-joggo-runner-setup.md (Step 3.3). Paste this into the
 // Tailscale admin console -> Access Controls, or sync via GitOps. HuJSON (JSON
 // with comments + trailing commas) is what the admin console expects.
 //
@@ -25,7 +25,7 @@
     // No other rule grants access to tag:ci -> default-deny applies to everyone else.
   ],
 
-  // Tailscale SSH: admin devices may SSH into marathon as ghrunner or root.
+  // Tailscale SSH: admin devices may SSH into joggo as ghrunner or root.
   // This replaces a public sshd; access is governed entirely by these ACLs.
   "ssh": [
     {

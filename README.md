@@ -1,4 +1,4 @@
-# marathon
+# joggo
 
 A self-hosted GitHub Actions runner built to run for weeks on a machine someone
 is also using.

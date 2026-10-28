@@ -3,7 +3,7 @@
 # runner-watchdog.sh — detect and recover a WEDGED (hung-but-alive) runner listener.
 #
 # COVERS BOTH RUNNER SHAPES. Since 2026-09-06 this targets whichever runner is actually
-# live on the box: the containerized slot (marathon-slot@N) or the retired persistent unit.
+# live on the box: the containerized slot (joggo-slot@N) or the retired persistent unit.
 # See "TARGET SELECTION" below. Before that it hardcoded the persistent unit, which after
 # the cutover meant it woke every 5 minutes, found that unit 'inactive', and correctly did
 # nothing — leaving the slot with no wedge cover at all.
@@ -72,17 +72,17 @@
 #   ./runner-watchdog.sh --check     # report state, never restart (safe anywhere)
 #   ./runner-watchdog.sh             # enforce (what the systemd timer runs)
 #   SILENCE_LIMIT=3900 ./runner-watchdog.sh
-#   SERVICE=marathon-slot@1.service DIAG=/var/log/marathon-slots/1/_diag ./runner-watchdog.sh --check
+#   SERVICE=joggo-slot@1.service DIAG=/var/log/joggo-slots/1/_diag ./runner-watchdog.sh --check
 #
-# Installed on marathon as /usr/local/sbin/runner-watchdog.sh, driven by
+# Installed on joggo as /usr/local/sbin/runner-watchdog.sh, driven by
 # runner-watchdog.timer every 5 minutes. Runs as root (needs systemctl restart).
 # See the restore-runner-after-clock-mismatch skill for the incident history.
 
 set -uo pipefail
 
 SLOT="${SLOT:-1}"
-SLOT_SERVICE="marathon-slot@${SLOT}.service"
-HOST_SERVICE="actions.runner.example-org.marathon.service"
+SLOT_SERVICE="joggo-slot@${SLOT}.service"
+HOST_SERVICE="actions.runner.example-org.joggo.service"
 
 # --- TARGET SELECTION -------------------------------------------------------
 # Exactly one of these two runners may hold the registration at a time (the slot unit
@@ -106,11 +106,11 @@ if [ -z "${SERVICE:-}" ]; then
 fi
 
 # _diag lives in a different place for each shape. On the slot it is a HOST bind
-# (/var/log/marathon-slots/N/_diag) precisely so this watchdog and deploy-monitor.ps1 can read
+# (/var/log/joggo-slots/N/_diag) precisely so this watchdog and deploy-monitor.ps1 can read
 # it from outside the container; on the persistent runner it is the install's own _diag.
 if [ -z "${DIAG:-}" ]; then
     case "$SERVICE" in
-        marathon-slot@*) DIAG="/var/log/marathon-slots/${SLOT}/_diag" ;;
+        joggo-slot@*) DIAG="/var/log/joggo-slots/${SLOT}/_diag" ;;
         *)         DIAG="/home/ghrunner/actions-runner/_diag" ;;
     esac
 fi
@@ -132,7 +132,7 @@ STAMP="${STAMP:-/var/lib/runner-watchdog/last-restart}"
 # teardown alone and report a false ERROR on a recovery that was still in progress.
 if [ -z "${RECOVER_TIMEOUT:-}" ]; then
     case "$SERVICE" in
-        marathon-slot@*) RECOVER_TIMEOUT=360 ;;
+        joggo-slot@*) RECOVER_TIMEOUT=360 ;;
         *)         RECOVER_TIMEOUT=180 ;;
     esac
 fi

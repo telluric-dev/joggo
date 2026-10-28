@@ -1,12 +1,12 @@
 ---
 name: restore-runner-after-clock-mismatch
 description: >-
-  Use when the marathon runner is not taking jobs and it is NOT a GitHub outage — either the
+  Use when the joggo runner is not taking jobs and it is NOT a GitHub outage — either the
   clock-drift incident (OAuth "token expired" with a large local-vs-server time gap, "runner
   registration has been deleted from the server") or a WEDGED listener (service active, process
   alive at 0% CPU, log silent, jobs queued forever). Covers telling the two apart, the log
   signatures, re-registering with --replace, restarting a wedge, and the three self-heal layers.
-  Operator skill for the marathon platform repo. Trigger on "token expired", "clock drift",
+  Operator skill for the joggo platform repo. Trigger on "token expired", "clock drift",
   "clock mismatch", "registration deleted", "runner dead after power outage", "re-register the
   runner", "jobs stuck but runner looks fine", "runner idle but not picking up jobs", "wedged
   listener", "hanging jobs".
@@ -14,8 +14,8 @@ description: >-
 
 # Runner alive-but-not-working: triage and repair
 
-⚠ **Post-cutover unit names.** Since 2026-09-05 the serving unit is **`marathon-slot@1.service`** with
-logs in **`/var/log/marathon-slots/1/_diag/`**; `actions.runner.example-org.marathon.service` is `disabled`
+⚠ **Post-cutover unit names.** Since 2026-09-05 the serving unit is **`joggo-slot@1.service`** with
+logs in **`/var/log/joggo-slots/1/_diag/`**; `actions.runner.example-org.joggo.service` is `disabled`
 by design and its `_diag` is frozen at the cutover date. The commands below name the slot; the
 persistent paths remain valid only if you have deliberately rolled back (**upgrade-ci-runner** §3).
 
@@ -38,9 +38,9 @@ only the first leaves the box down:
    start, correctly. Fix on the HOST, elevated: `w32tm /config /update; Restart-Service W32Time;
    w32tm /resync /force`. WSL follows within a poll.
 2. **Every docker object the slot owns survives.** `cleanup()` runs from an EXIT trap, and a hard
-   reset SIGKILLs it, so `marathon-slot-N`, `marathon-dind-N` and `marathon-runner-N` are all still there. Since
+   reset SIGKILLs it, so `joggo-slot-N`, `joggo-dind-N` and `joggo-runner-N` are all still there. Since
    2026-09-19 `reclaim_stale()` clears them automatically at startup; on any box still running an
-   older script, `docker network rm marathon-slot-1` and `docker rm -f marathon-dind-1 marathon-runner-1` by hand.
+   older script, `docker network rm joggo-slot-1` and `docker rm -f joggo-dind-1 joggo-runner-1` by hand.
 
 Measured 2026-09-19: the reset happened at 15:44, the clock fault blocked the slot, and after the
 clock was fixed the slot *still* could not start for 80 minutes because of the leftover network —
@@ -61,7 +61,7 @@ Do not guess; they have opposite fixes, and applying the wrong one makes things 
 
 The "never restart the runner" rule belongs to **C only**. In B, restarting is exactly right.
 
-⚠ **Row 1 does not transfer to the slot.** `--once` turnover makes `marathon-slot@1` genuinely
+⚠ **Row 1 does not transfer to the slot.** `--once` turnover makes `joggo-slot@1` genuinely
 `inactive` between every job, so "inactive" no longer means "dead" — read **`is-enabled`**
 (should be `enabled`/`indirect`) and the age of the newest `Runner_*.log` instead. A paused slot
 (`ci-pause status`) looks the same again. Treating a normal idle slot as failure A and
@@ -69,8 +69,8 @@ re-registering it would be an unforced outage.
 
 ```bash
 # one-shot triage
-wsl -d Ubuntu -u root bash -c 'systemctl is-active marathon-slot@1.service; systemctl is-enabled marathon-slot@1.service; ps -eo pid,etime,%cpu,wchan:20,cmd | grep -a "[R]unner\."'
-wsl -d Ubuntu -u root bash -c 'ls -t /var/log/marathon-slots/1/_diag/Runner_*.log | head -1 | xargs tail -25'
+wsl -d Ubuntu -u root bash -c 'systemctl is-active joggo-slot@1.service; systemctl is-enabled joggo-slot@1.service; ps -eo pid,etime,%cpu,wchan:20,cmd | grep -a "[R]unner\."'
+wsl -d Ubuntu -u root bash -c 'ls -t /var/log/joggo-slots/1/_diag/Runner_*.log | head -1 | xargs tail -25'
 curl -s https://www.githubstatus.com/api/v2/summary.json | python -c "import json,sys;d=json.load(sys.stdin);print(d['status']['description'])"
 ```
 
@@ -108,15 +108,15 @@ Registration is gone server-side, so a restart does nothing. Re-register:
    ```bash
    wsl -d Ubuntu -u ghrunner bash -c 'cd /home/ghrunner/actions-runner && ./config.sh remove --token <TOKEN> || ./config.sh remove --local'
    ```
-3. **Re-register — `--replace` is required.** A ghost `marathon` entry usually still exists
+3. **Re-register — `--replace` is required.** A ghost `joggo` entry usually still exists
    server-side ("A runner exists with the same name"):
    ```bash
-   wsl -d Ubuntu -u ghrunner bash -c 'cd /home/ghrunner/actions-runner && ./config.sh --url https://github.com/example-org --token <TOKEN> --name marathon --labels self-hosted,linux,x64,marathon --unattended --replace'
+   wsl -d Ubuntu -u ghrunner bash -c 'cd /home/ghrunner/actions-runner && ./config.sh --url https://github.com/example-org --token <TOKEN> --name joggo --labels self-hosted,linux,x64,joggo --unattended --replace'
    ```
 4. **Start and verify** — want `Listening for Jobs`. Re-registering writes `.runner`/`.credentials`
    in the shared runner root, which the **slot** also uses, so start the slot, not the retired unit:
    ```bash
-   wsl -d Ubuntu -u root bash -c 'systemctl start marathon-slot@1.service && journalctl -u marathon-slot@1.service -n5 --no-pager'
+   wsl -d Ubuntu -u root bash -c 'systemctl start joggo-slot@1.service && journalctl -u joggo-slot@1.service -n5 --no-pager'
    ```
 
 ## 3. Failure B — wedged listener (hung, but alive)
@@ -141,7 +141,7 @@ What happened, from the log: the broker's TLS connection died mid-read, then the
 
 ```bash
 wsl -d Ubuntu -u root bash -c 'ps -eo cmd | grep -a "[R]unner.Worker" || echo "no job in flight - safe"'
-wsl -d Ubuntu -u root bash -c 'systemctl restart marathon-slot@1.service'
+wsl -d Ubuntu -u root bash -c 'systemctl restart joggo-slot@1.service'
 ```
 (Host `pgrep`/`ps` sees a `Runner.Worker` **inside** the slot container — same PID namespace, same
 absolute runner path — so the in-flight check works unchanged. See **upgrade-ci-runner** §6.)
@@ -149,10 +149,10 @@ absolute runner path — so the in-flight check works unchanged. See **upgrade-c
 ## 4. Self-heal layers (verify these are still in place)
 
 ```bash
-wsl -d Ubuntu -u root bash -c 'grep ^makestep /etc/chrony/chrony.conf; systemctl show marathon-slot@1.service -p Restart,RestartUSec; systemctl list-timers runner-watchdog.timer --no-pager; /usr/local/sbin/runner-watchdog.sh --check'
+wsl -d Ubuntu -u root bash -c 'grep ^makestep /etc/chrony/chrony.conf; systemctl show joggo-slot@1.service -p Restart,RestartUSec; systemctl list-timers runner-watchdog.timer --no-pager; /usr/local/sbin/runner-watchdog.sh --check'
 ```
-`runner-watchdog.sh --check` reports its own target — expect `target=marathon-slot@1.service
-diag=/var/log/marathon-slots/1/_diag`. If it still names the persistent unit, layer 3 is guarding
+`runner-watchdog.sh --check` reports its own target — expect `target=joggo-slot@1.service
+diag=/var/log/joggo-slots/1/_diag`. If it still names the persistent unit, layer 3 is guarding
 something nobody is running.
 
 - **Host clock (the gap layer 1 cannot close).** chrony only owns the GUEST clock, and on WSL2 the
@@ -173,7 +173,7 @@ something nobody is running.
   effectively never. `/etc/chrony/chrony.conf` now has `makestep 1 -1` (step any offset over 1s,
   always), so a future freeze corrects within one poll instead of killing the registration.
 - **Crash (installed 2026-08-30).** GitHub's unit ships no `Restart=`. Override at
-  `/etc/systemd/system/actions.runner.example-org.marathon.service.d/override.conf`:
+  `/etc/systemd/system/actions.runner.example-org.joggo.service.d/override.conf`:
   `Restart=always`, `RestartSec=120`.
 - **Wedge (installed 2026-09-01).** `Restart=always` cannot fire for a process that never exits,
   which is exactly why layer 2 did not catch failure B. `watchdog/runner-watchdog.sh` +

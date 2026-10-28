@@ -1,8 +1,8 @@
 [Unit]
-Description=Re-run CI jobs that failed because marathon rebooted
+Description=Re-run CI jobs that failed because joggo rebooted
 Documentation=file:/usr/local/sbin/ci-rerun-after-reboot.sh
 # The runner slot must be back before retried jobs have anywhere to land.
-After=network-online.target docker.service marathon-slot@1.service
+After=network-online.target docker.service joggo-slot@1.service
 Wants=network-online.target
 
 [Service]

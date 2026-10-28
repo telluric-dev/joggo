@@ -10,7 +10,7 @@
 # paths resolve inside the dind's filesystem, not the runner's.
 #
 # The docker flags replayed below are copied verbatim from a real appone
-# node-test job on marathon (_diag/Worker_20260823-124613-utc.log), with only the
+# node-test job on joggo (_diag/Worker_20260823-124613-utc.log), with only the
 # container names changed.
 #
 #   sudo spike/ephemeral-slot-spike.sh          # run every scenario

@@ -14,7 +14,7 @@
 # TWO DESIGN DECISIONS THAT MATTER, both learned the hard way on this box:
 #
 # 1. THE FAST PATH NEVER CROSSES THE WSL BOUNDARY. wsl.exe calls on this machine can be
-#    slow or hang outright under memory pressure — the marathon memory guard counts jobs
+#    slow or hang outright under memory pressure — the joggo memory guard counts jobs
 #    through `wsl.exe ... ps` with a 15s timeout and that call has timed out 7 times in
 #    131 passes, always when the VM was loaded. A watcher that hangs during the event it
 #    is meant to record is worse than no watcher. vmmem is read from the WINDOWS side via
@@ -27,8 +27,8 @@
 #    there first. Recording only working set is how a leak hides.
 #
 # OUTPUT
-#   C:\ProgramData\marathon\mem-watch.csv            one line per sample, append-only
-#   C:\ProgramData\marathon\snapshots\<stamp>.txt    full state, written only on a trip
+#   C:\ProgramData\joggo\mem-watch.csv            one line per sample, append-only
+#   C:\ProgramData\joggo\snapshots\<stamp>.txt    full state, written only on a trip
 #
 # PARAMETERS are thresholds for "things turned". Defaults chosen from measured behaviour:
 #   FreeTripMB 3500 — above the guard's 2500 warn line, so we capture the APPROACH to
@@ -46,7 +46,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$root     = 'C:\ProgramData\marathon'
+$root     = 'C:\ProgramData\joggo'
 $csv      = Join-Path $root 'mem-watch.csv'
 $snapDir  = Join-Path $root 'snapshots'
 $stateF   = Join-Path $root 'mem-watch.state'
@@ -230,7 +230,7 @@ if($tripReason -ne '' -and ($cooled -or $SnapshotNow)){
   } catch { $out.Add('  (could not enumerate)') }
   $out.Add('')
 
-  $out.Add('---- marathon memory guard, last 12 lines ----')
+  $out.Add('---- joggo memory guard, last 12 lines ----')
   $g = Join-Path $root 'wsl-mem-guard.log'
   if(Test-Path $g){ Get-Content $g -Tail 12 | ForEach-Object { $out.Add('  ' + $_.TrimEnd()) } }
   else { $out.Add('  (no guard log)') }

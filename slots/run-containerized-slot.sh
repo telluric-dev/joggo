@@ -25,7 +25,7 @@
 # the container and its volumes are destroyed, systemd starts a fresh one.
 #
 # MUTUAL EXCLUSION. One registration = one session. This CANNOT run alongside
-# actions.runner.example-org.marathon.service — the second one to connect loses with
+# actions.runner.example-org.joggo.service — the second one to connect loses with
 # "A session for this runner already exists". The unit enforces this with Conflicts=.
 #
 # SESSION CONFLICT. Measured 2026-09-04: after an UNCLEAN stop, GitHub holds the old
@@ -58,12 +58,12 @@ RUNNER_ROOT="${RUNNER_ROOT:-/home/ghrunner/actions-runner}"
 # Thin ORG image, not the upstream one: see tools/runner-image/Dockerfile. The stock
 # ghcr.io/actions/actions-runner lacks libatomic1 (every pnpm repo fails), zstd
 # (actions/cache) and git-lfs — all of which the persistent host runner had for free.
-# Build with: docker build -t marathon/actions-runner:local tools/runner-image
-RUNNER_IMAGE="${RUNNER_IMAGE:-marathon/actions-runner:local}"
-DIND_IMAGE="${DIND_IMAGE:-marathon/dind:local}"
-NET="marathon-slot-$SLOT"
-RUNNER_C="marathon-runner-$SLOT"
-DIND_C="marathon-dind-$SLOT"
+# Build with: docker build -t joggo/actions-runner:local tools/runner-image
+RUNNER_IMAGE="${RUNNER_IMAGE:-joggo/actions-runner:local}"
+DIND_IMAGE="${DIND_IMAGE:-joggo/dind:local}"
+NET="joggo-slot-$SLOT"
+RUNNER_C="joggo-runner-$SLOT"
+DIND_C="joggo-dind-$SLOT"
 # The slot's PINNED subnet. Deterministic so a recreate cannot hand a job a different range,
 # and so slot 1 and slot 2 can never swap (they did, between 2026-10-05 and 10-06, which is why
 # the same fault looked like it moved between slots).
@@ -73,8 +73,8 @@ DIND_C="marathon-dind-$SLOT"
 # the default pool would risk a future auto-created network overlapping it.
 SLOT_SUBNET="10.201.$SLOT.0/24"
 SLOT_GATEWAY="10.201.$SLOT.1"
-WORK_VOL="marathon-slot-${SLOT}-work"
-ROOT_VOL="marathon-slot-${SLOT}-root"
+WORK_VOL="joggo-slot-${SLOT}-work"
+ROOT_VOL="joggo-slot-${SLOT}-root"
 # _diag is the ONE deliberate exception to "nothing survives a job boundary". It is
 # bind-mounted to the HOST, not a throwaway volume, because two things depend on those
 # logs OUTSIDE the container:
@@ -84,7 +84,7 @@ ROOT_VOL="marathon-slot-${SLOT}-root"
 # With _diag in a volume both go blind: the control plane showed no card at all for
 # appthree on 2026-09-05. Logs are not a poisoning vector, so the trade is worth
 # it — but it IS a deliberate exception, not an oversight.
-DIAG_DIR="${DIAG_DIR:-/var/log/marathon-slots/${SLOT}/_diag}"
+DIAG_DIR="${DIAG_DIR:-/var/log/joggo-slots/${SLOT}/_diag}"
 DRY_RUN="${DRY_RUN:-0}"
 PULL_ONLY="${PULL_ONLY:-0}"
 
@@ -124,12 +124,12 @@ clear_failures() { rm -f "$FAILSTAMP" 2>/dev/null || true; }
 # BEFORE preflight and before anything is built, so a hold costs one bash and one sleep:
 # no runner container, no dind, no volumes, no job.
 #
-# It deliberately does NOT stop the unit. Holding inside the launcher keeps marathon-slot@N
+# It deliberately does NOT stop the unit. Holding inside the launcher keeps joggo-slot@N
 # active, so resume is just an rm of the flag and the next poll picks a job up; and
 # Restart=always never fights it, because there is no exit to restart.
 #
 # Nothing is lost by holding. The registration stays (this slot is not --ephemeral), so
-# GitHub keeps queueing runs against marathon and hands them over oldest-first on resume.
+# GitHub keeps queueing runs against joggo and hands them over oldest-first on resume.
 # GitHub does expire a queued job after 24h, which makes this an afternoon lever rather
 # than a weekend one — see the header of ci-pause.sh.
 PAUSE_FLAG="${PAUSE_FLAG:-/var/lib/ci-slot/${SLOT}.paused}"
@@ -208,9 +208,9 @@ cleanup() {
     # NB: DIAG_DIR is host-side and deliberately NOT removed — see its declaration.
     docker volume  rm "$WORK_VOL" "$ROOT_VOL" >/dev/null 2>&1 || true
     # Legacy: _diag used to be a per-slot VOLUME before it moved to a host bind on 2026-09-05.
-    # The rename left marathon-slot-N-diag behind with nothing referencing it, and no code path that
+    # The rename left joggo-slot-N-diag behind with nothing referencing it, and no code path that
     # would ever remove it. Sweep it once here; it is a no-op on every box that never had one.
-    docker volume  rm "marathon-slot-${SLOT}-diag" >/dev/null 2>&1 || true
+    docker volume  rm "joggo-slot-${SLOT}-diag" >/dev/null 2>&1 || true
     exit "$rc"
 }
 
@@ -234,8 +234,8 @@ preflight() {
     # persistent runner is live — that is the whole point of being able to rehearse
     # this before the cutover.
     if [ "$DRY_RUN" != "1" ] && [ "$PULL_ONLY" != "1" ] \
-       && systemctl is-active --quiet actions.runner.example-org.marathon.service 2>/dev/null; then
-        die "actions.runner.example-org.marathon.service is ACTIVE — it holds the session. Stop it first (this is the cutover)."
+       && systemctl is-active --quiet actions.runner.example-org.joggo.service 2>/dev/null; then
+        die "actions.runner.example-org.joggo.service is ACTIVE — it holds the session. Stop it first (this is the cutover)."
     fi
     # Layer 1 still matters: a skewed clock breaks the runner's OAuth, and here it
     # would break it once per job instead of once.
@@ -320,10 +320,10 @@ main() {
     # being reset with the power button. The scripted assumption "my names are free" only holds
     # after a CLEAN exit, and an unclean one is precisely when self-heal has to work.
     #
-    # Measured 2026-09-19. A hard reset at 15:44 left the network AND a stopped marathon-dind-1 behind.
+    # Measured 2026-09-19. A hard reset at 15:44 left the network AND a stopped joggo-dind-1 behind.
     # `docker network create` failed with "already exists" and was fatal, so the slot could not
     # start for 80 minutes with six jobs queued. Removing the network by hand would only have
-    # exposed the next landmine: `docker run --name marathon-dind-1` fails the same way, and there was
+    # exposed the next landmine: `docker run --name joggo-dind-1` fails the same way, and there was
     # no pre-run removal anywhere — line 160's `docker rm` lives in the EXIT trap, which is
     # exactly the thing that does not run in this scenario.
     #
@@ -389,7 +389,7 @@ main() {
     # --sysctl disable_ipv6: make the slot daemon match the HOST's network reality.
     # This box has IPv6 switched off at the host (net.ipv6.conf.all.disable_ipv6=1), but a
     # container does NOT inherit that — verified 2026-09-06, the host read 1 while inside
-    # marathon-dind-1 the same sysctl read 0. So the dind daemon and everything it pulls (buildkit,
+    # joggo-dind-1 the same sysctl read 0. So the dind daemon and everything it pulls (buildkit,
     # base images) sees AAAA records, tries the v6 route first, and waits out a connect
     # timeout on a network that has no v6 path at all before falling back to v4. That is the
     # shape of the one buildkit pull failure recorded against this slot.

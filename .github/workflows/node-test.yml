@@ -4,7 +4,7 @@
 # once, so consumer repos get it in a few lines instead of hand-rolling a
 # container + service block per repo.
 #
-# Why this exists: the runner (marathon) is a shared dev+CI box. A test job that
+# Why this exists: the runner (joggo) is a shared dev+CI box. A test job that
 # pins a host DB port collides with dev databases on the machine. This workflow
 # runs the job INSIDE a container and attaches a Postgres SERVICE with NO host
 # port mapping - the job reaches the DB at `postgres:5432` over the private job
@@ -17,7 +17,7 @@
 #
 #   jobs:
 #     test:
-#       uses: example-org/marathon/.github/workflows/node-test.yml@main
+#       uses: example-org/joggo/.github/workflows/node-test.yml@main
 #       with:
 #         postgres-user: handsfree_clinic
 #         postgres-password: handsfree_clinic
@@ -100,7 +100,7 @@ on:
         description: >-
           Grace period during which a failing pg_isready does NOT count against
           --health-retries. Docker default "0s" keeps existing behaviour. Raise it on a runner
-          whose disk makes first-boot initdb slower than interval*retries: marathon was measured
+          whose disk makes first-boot initdb slower than interval*retries: joggo was measured
           at 3m07s to first connection against a ~75s budget, so every job there died in
           "Initialize containers" before checkout and no repo code ran.
         required: false
@@ -125,7 +125,7 @@ on:
         description: "JSON array of runs-on labels for the self-hosted runner."
         type: string
         required: false
-        default: '["self-hosted", "linux", "x64", "marathon"]'
+        default: '["self-hosted", "linux", "x64", "joggo"]'
     secrets:
       NODE_AUTH_TOKEN:
         description: "read:packages token for private npm registries (e.g. GitHub Packages). Referenced by the repo's .npmrc as ${NODE_AUTH_TOKEN} at install time."
@@ -247,7 +247,7 @@ jobs:
         env:
           TEST_MAX_WORKERS: ${{ inputs.test-max-workers }}
         run: |
-          # Cap the test runner's parallelism. marathon is a single-slot 6-core box:
+          # Cap the test runner's parallelism. joggo is a single-slot 6-core box:
           # an uncapped vitest pool over a large suite drives it into swap, and the
           # first casualty is any timing-sensitive test (userEvent typing races against
           # the 5s testTimeout) - which then fails a DIFFERENT test each run, looking

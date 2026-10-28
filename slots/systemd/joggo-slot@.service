@@ -1,15 +1,15 @@
 # Containerized runner slot %i — one job per container, persistent registration.
-# Installs to: /etc/systemd/system/marathon-slot@.service
-#   systemctl enable --now marathon-slot@1
+# Installs to: /etc/systemd/system/joggo-slot@.service
+#   systemctl enable --now joggo-slot@1
 #
-# THIS REPLACES actions.runner.example-org.marathon.service — it does not run beside it.
+# THIS REPLACES actions.runner.example-org.joggo.service — it does not run beside it.
 # One registration can hold exactly one session, so Conflicts= makes systemd enforce
 # what GitHub would otherwise enforce with a 95-second retry loop.
 #
 # ROLLBACK (single command, no state to unwind):
-#   systemctl disable --now marathon-slot@1 && systemctl start actions.runner.example-org.marathon.service
+#   systemctl disable --now joggo-slot@1 && systemctl start actions.runner.example-org.joggo.service
 #
-# Self-heal mapping — the three layers from install-marathon-selfheal.sh:
+# Self-heal mapping — the three layers from install-joggo-selfheal.sh:
 #   1. clock  — unchanged, host-level chrony. The launcher additionally REFUSES to
 #               start on a skewed clock, so drift can no longer become a hot
 #               registration loop the way it would with a naive Restart=always.
@@ -20,7 +20,7 @@
 #               asking which runner is live, so it follows this unit automatically; no
 #               drop-in or override is needed here. Two of the three blockers that were
 #               written down turned out not to exist: _diag is already a HOST bind
-#               (/var/log/marathon-slots/%i/_diag), and a host-side pgrep DOES see the
+#               (/var/log/joggo-slots/%i/_diag), and a host-side pgrep DOES see the
 #               containerized Runner.Worker, so the "never restart under a job" guard
 #               needed no porting. What did change is RECOVER_TIMEOUT: a slot restart
 #               pays teardown (TimeoutStopSec below) PLUS a ~45s cold start, so it is
@@ -38,10 +38,10 @@
 #               expected shape of a pause — check `ci-pause status` before assuming a fault.
 [Unit]
 Description=Containerized GitHub Actions runner slot %i
-Documentation=https://github.com/example-org/marathon
+Documentation=https://github.com/example-org/joggo
 After=docker.service
 Requires=docker.service
-Conflicts=actions.runner.example-org.marathon.service
+Conflicts=actions.runner.example-org.joggo.service
 # NOTE: StartLimit* live in [Unit], NOT [Service] — systemd silently ignores them in
 # [Service] ("Unknown key"), which would leave the default 5-starts-in-10s limiter
 # armed. Normal --once turnover restarts constantly and WOULD trip it, dropping the

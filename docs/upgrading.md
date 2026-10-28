@@ -1,19 +1,19 @@
 ---
 name: upgrade-ci-runner
 description: >-
-  Use before and during any risky change to the live marathon runner — cutting over to the
+  Use before and during any risky change to the live joggo runner — cutting over to the
   containerized slot, upgrading the runner version, editing the self-heal layers, or changing WSL
   config. Covers the proven order (restore point → verify it → baseline smoke → change → smoke →
   keep or roll back), the one-command rollback, the runner-smoke workflow and how to read it, the
   fault injections that validate self-heal, and the verification traps that make a broken runner
-  look healthy. Operator skill for the marathon platform repo. Trigger on "cut over to the
+  look healthy. Operator skill for the joggo platform repo. Trigger on "cut over to the
   containerized runner", "upgrade the runner", "roll back the runner", "smoke test the runner",
-  "is it safe to change the runner", "test the self-heal", "restore point for marathon".
+  "is it safe to change the runner", "test the self-heal", "restore point for joggo".
 ---
 
 # Change the runner without losing CI
 
-`marathon` is a single box serving twelve repos with no fallback. Every change to it is a change
+`joggo` is a single box serving twelve repos with no fallback. Every change to it is a change
 to production CI, and the failure mode is *silent*: the runner looks `active` while taking no
 jobs. This is the order that has actually worked, and the traps that have actually bitten.
 
@@ -44,7 +44,7 @@ architecture change:
 # from WSL, as root. Stage on ext4 and copy: writing the stream straight to /mnt/c
 # takes >10 min, staging locally takes ~2.
 /usr/local/sbin/take-restore-point.sh /var/tmp/rp
-cp -p /var/tmp/rp/* /mnt/c/Users/you/marathon-restore/ && rm -rf /var/tmp/rp
+cp -p /var/tmp/rp/* /mnt/c/Users/you/joggo-restore/ && rm -rf /var/tmp/rp
 ```
 
 It captures the runner root (minus `_work` and `_diag`), `/etc/systemd/system`,
@@ -58,12 +58,12 @@ secret-bearing tarball is a poor trade for a one-line build. Since 2026-09-12 th
 **two** of them, and a slot will not start without both:
 
 ```bash
-docker build -t marathon/actions-runner:local tools/runner-image
-slots/dind-image/build.sh          # marathon/dind:local — dind + digest-pinned buildkit
+docker build -t joggo/actions-runner:local tools/runner-image
+slots/dind-image/build.sh          # joggo/dind:local — dind + digest-pinned buildkit
 ```
 
 If only the dind image is missing, the fallback is one variable:
-`DIND_IMAGE=docker:28-dind systemctl restart marathon-slot@1` — jobs then pull buildkit from
+`DIND_IMAGE=docker:28-dind systemctl restart joggo-slot@1` — jobs then pull buildkit from
 Docker Hub per job again, which works but reinstates the 2026-09-11 failure mode.
 
 ⚠ **The archive contains runner credentials and lands world-readable.** `chmod 600` does not stick
@@ -73,7 +73,7 @@ Set the ACL from PowerShell:
 
 ```powershell
 # Inheritable ACEs on the DIRECTORY, then push them down with /reset.
-$d = "$env:USERPROFILE\marathon-restore"
+$d = "$env:USERPROFILE\joggo-restore"
 icacls $d /inheritance:r `
   /grant:r "$($env:USERDOMAIN)\$($env:USERNAME):(OI)(CI)F" /grant:r "SYSTEM:(OI)(CI)F"
 icacls $d /reset /T
@@ -118,9 +118,9 @@ needs no secrets, every step ends `exit 0` so it can never itself be the reason 
 lands on whichever model is serving.
 
 ```bash
-gh workflow run runner-smoke.yml --repo example-org/marathon
-gh run list --repo example-org/marathon --workflow=runner-smoke.yml --limit 1
-gh run view <id> --repo example-org/marathon --log | grep -aE 'host docker socket|in container|runner \.env|server '
+gh workflow run runner-smoke.yml --repo example-org/joggo
+gh run list --repo example-org/joggo --workflow=runner-smoke.yml --limit 1
+gh run view <id> --repo example-org/joggo --log | grep -aE 'host docker socket|in container|runner \.env|server '
 ```
 
 Read it against this. The two models are unambiguous:
@@ -141,7 +141,7 @@ difference is **persistence, not permission**:
 
 ```bash
 # measured 2026-09-05, with a slot live
-docker exec marathon-runner-1 sh -c 'echo MALICIOUS_HOOK=1 >> /home/ghrunner/actions-runner/.env'
+docker exec joggo-runner-1 sh -c 'echo MALICIOUS_HOOK=1 >> /home/ghrunner/actions-runner/.env'
 cat /home/ghrunner/actions-runner/.env      # -> LANG=C.UTF-8   (host untouched, mtime unchanged)
 ```
 
@@ -160,10 +160,10 @@ can plant that hook permanently. Permissions cannot fix it — only process isol
 
 ```bash
 # CUT OVER — refuses if a job is in flight; Conflicts= stops both running at once
-systemctl stop actions.runner.example-org.marathon.service && systemctl enable --now marathon-slot@1
+systemctl stop actions.runner.example-org.joggo.service && systemctl enable --now joggo-slot@1
 
 # ROLL BACK — one command, no state to unwind
-systemctl disable --now marathon-slot@1 && systemctl start actions.runner.example-org.marathon.service
+systemctl disable --now joggo-slot@1 && systemctl start actions.runner.example-org.joggo.service
 ```
 
 Rollback is **proven**: after the 2026-09-05 failure it left **zero** containers, volumes and
@@ -191,9 +191,9 @@ kill -9 $(pgrep -f 'Runner\.Listener' | head -1)     # back in ~5s, listening in
 #     Wait for idle first — guard 2 will (correctly) refuse under a job, which proves
 #     the guard but not the act path.
 pgrep -f 'Runner\.Worker' && echo "job in flight — wait" || true
-before=$(ls -t /var/log/marathon-slots/1/_diag/Runner_*.log | head -1)
+before=$(ls -t /var/log/joggo-slots/1/_diag/Runner_*.log | head -1)
 SILENCE_LIMIT=1 /usr/local/sbin/runner-watchdog.sh   # measured 2026-09-06: RECOVERED in 46s
-[ "$before" != "$(ls -t /var/log/marathon-slots/1/_diag/Runner_*.log | head -1)" ] && echo "PASS: new listener log"
+[ "$before" != "$(ls -t /var/log/joggo-slots/1/_diag/Runner_*.log | head -1)" ] && echo "PASS: new listener log"
 rm -f /var/lib/runner-watchdog/last-restart          # don't leave a real wedge rate-limited out
 ```
 
@@ -226,7 +226,7 @@ slot this is easier than it sounds — every job rolls a brand-new `Runner_*.log
 filename change" is itself the freshness test:
 
 ```bash
-D=/var/log/marathon-slots/1/_diag          # slot;  persistent: /home/ghrunner/actions-runner/_diag
+D=/var/log/joggo-slots/1/_diag          # slot;  persistent: /home/ghrunner/actions-runner/_diag
 L=$(ls -t $D/Runner_*.log | head -1)
 echo "$(basename $L) age=$(( $(date +%s) - $(stat -c %Y $L) ))s"; tail -3 "$L"   # want: Session created + Listening
 ```
@@ -257,12 +257,12 @@ stand in the way of porting it. Two of the three did not exist.
 
 | Believed blocker | What was actually true |
 | --- | --- |
-| `_diag` is a per-job volume, so the host cannot read it | It is already a **host bind** (`/var/log/marathon-slots/N/_diag`) — moved there on 09-05 so `deploy-monitor.ps1` could see a deploy at all |
+| `_diag` is a per-job volume, so the host cannot read it | It is already a **host bind** (`/var/log/joggo-slots/N/_diag`) — moved there on 09-05 so `deploy-monitor.ps1` could see a deploy at all |
 | host `pgrep` cannot see a `Runner.Worker` inside a container | It can. The containers get no separate PID view from the host, and the runner root is mounted at the **same absolute path**, so the command line matches verbatim |
 | the 65-min silence threshold must be re-measured for `--once` | It is the same listener binary doing the same long poll. `--once` changes when it *exits*, not how often it *writes* while waiting |
 
 What did need changing was the target and one timeout. `runner-watchdog.sh` now selects its
-target by asking which runner is live — it prefers `marathon-slot@N` when that unit is **enabled**, not
+target by asking which runner is live — it prefers `joggo-slot@N` when that unit is **enabled**, not
 merely active, because normal `--once` turnover makes the slot briefly inactive between every job
 and a watchdog that fell back in that window would assess a unit nobody is running and pronounce
 the box healthy. `RECOVER_TIMEOUT` is **360 s** for a slot against 180 s for the persistent unit,
@@ -279,7 +279,7 @@ inheritance errs long, so the untested case is *acts late*, not *acts wrongly*.
 **Current posture — three layers, and the boot winner is the slot.**
 
 ```
-marathon-slot@1          active / enabled      <- what comes back on boot
+joggo-slot@1          active / enabled      <- what comes back on boot
 persistent runner  inactive / disabled   <- the documented fallback, one command away
 ```
 
@@ -288,5 +288,5 @@ cover, so failing *back* on boot would trade per-job isolation away for nothing.
 — they `Conflicts=`, and the boot winner would be nondeterministic. To fall back deliberately:
 
 ```bash
-systemctl disable --now marathon-slot@1 && systemctl enable --now actions.runner.example-org.marathon.service
+systemctl disable --now joggo-slot@1 && systemctl enable --now actions.runner.example-org.joggo.service
 ```

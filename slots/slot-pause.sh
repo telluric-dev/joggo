@@ -5,7 +5,7 @@
 #
 # WHY THIS EXISTS
 # ---------------
-# marathon is one 8GB WSL2 VM shared by CI, the dev Postgres instances and whatever
+# joggo is one 8GB WSL2 VM shared by CI, the dev Postgres instances and whatever
 # the operator is doing on Windows. A CI job is the largest single memory consumer
 # on the box and it arrives unannounced. This is the lever for "not for the next
 # hour" — the alternative people reach for is `systemctl stop`, which kills the job
@@ -31,7 +31,7 @@
 #
 # This slot reuses a permanent registration (it has never used --ephemeral), so the
 # runner stays registered to the org while it is paused. GitHub keeps queueing runs
-# against marathon and hands them over oldest-first the moment it comes back. Nothing
+# against joggo and hands them over oldest-first the moment it comes back. Nothing
 # is dropped and nothing needs re-running. deploy-monitor's INCOMING·QUEUED list is
 # fed from the GitHub API rather than from the runner, so you can literally watch the
 # queue build while paused.
@@ -98,10 +98,10 @@ done
 [ -n "$ACTION" ] || { echo "usage: ci-pause <pause|resume|status> [--now] [--slot N] [reason]" >&2; exit 2; }
 
 PAUSE_FLAG="${PAUSE_FLAG:-/var/lib/ci-slot/${SLOT}.paused}"
-UNIT="marathon-slot@${SLOT}.service"
-LEGACY_UNIT="actions.runner.example-org.marathon.service"
-RUNNER_C="marathon-runner-${SLOT}"
-DIND_C="marathon-dind-${SLOT}"
+UNIT="joggo-slot@${SLOT}.service"
+LEGACY_UNIT="actions.runner.example-org.joggo.service"
+RUNNER_C="joggo-runner-${SLOT}"
+DIND_C="joggo-dind-${SLOT}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-30}"
 
 say()  { echo "[ci-pause] $*"; }

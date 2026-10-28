@@ -1,6 +1,6 @@
 [Unit]
 Description=Run the runner listener watchdog every 5 minutes
-Documentation=https://github.com/example-org/marathon
+Documentation=https://github.com/example-org/joggo
 
 [Timer]
 # Give the runner time to settle after boot before judging its liveness.

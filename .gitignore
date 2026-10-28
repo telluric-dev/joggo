@@ -6,7 +6,7 @@ watch-repos
 watch-notify
 
 # The guard's and watcher's working state, which live outside the repo by
-# default (C:\ProgramData\marathon) but land here if you point them at it.
+# default (C:\ProgramData\joggo) but land here if you point them at it.
 mem-watch.csv
 wsl-mem-guard.log
 snapshots/

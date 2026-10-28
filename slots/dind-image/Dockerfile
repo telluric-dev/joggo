@@ -28,9 +28,9 @@ FROM ${DIND_BASE}
 # place; recorded here as a label so a running slot can be asked what it holds.
 ARG BUILDKIT_DIGEST
 ARG BUILDKIT_REF
-LABEL org.marathon.buildkit-digest="${BUILDKIT_DIGEST}" \
-      org.marathon.buildkit-ref="${BUILDKIT_REF}" \
-      org.marathon.purpose="dind with a digest-pinned buildkit preloaded; no cross-job persistence"
+LABEL org.joggo.buildkit-digest="${BUILDKIT_DIGEST}" \
+      org.joggo.buildkit-ref="${BUILDKIT_REF}" \
+      org.joggo.purpose="dind with a digest-pinned buildkit preloaded; no cross-job persistence"
 
 # `docker save` output of the pinned buildkit image. Read-only for the life of
 # the image; the job's daemon loads FROM it, never writes back TO it.

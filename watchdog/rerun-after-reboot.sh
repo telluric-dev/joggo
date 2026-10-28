@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Re-run GitHub Actions jobs that failed because THIS box rebooted.
 #
-# marathon is an always-on Windows+WSL2 box that still takes Windows Update
+# joggo is an always-on Windows+WSL2 box that still takes Windows Update
 # reboots. A reboot produces TWO classes of bogus failure, both infrastructure
 # noise rather than code faults:
 #
@@ -33,18 +33,18 @@ GH_BIN="${CI_RERUN_GH_BIN:-/mnt/c/Program Files/GitHub CLI/gh.exe}"
 # Windows-side, reached the same way as gh.exe. Used only to file the root-cause
 # note into the CI day report; both are optional and failure is non-fatal.
 PWSH_BIN="${CI_RERUN_PWSH_BIN:-/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe}"
-DAY_REPORT_PS1="${CI_RERUN_DAY_REPORT:-C:/Users/you/marathon/monitor/day-report.ps1}"
+DAY_REPORT_PS1="${CI_RERUN_DAY_REPORT:-C:/Users/you/joggo/monitor/day-report.ps1}"
 
 # What identifies work belonging to this box. A run is only ever retried if one
 # of its FAILED jobs matches.
 #
 # Match on runner_name FIRST, not on the label set: 10 of the 12 callers use the
-# SUBSET labels (self-hosted, linux, x64) with no "marathon" in them -- only
+# SUBSET labels (self-hosted, linux, x64) with no "joggo" in them -- only
 # appone and appfour spell the full set. Every job that lands here reports
-# runner_name "marathon" regardless of which label set requested it, so keying on
+# runner_name "joggo" regardless of which label set requested it, so keying on
 # the name is what actually covers the fleet. The label stays as a fallback.
-RUNNER_NAME="${CI_RERUN_RUNNER_NAME:-marathon}"
-RUNNER_LABEL="${CI_RERUN_LABEL:-marathon}"
+RUNNER_NAME="${CI_RERUN_RUNNER_NAME:-joggo}"
+RUNNER_LABEL="${CI_RERUN_LABEL:-joggo}"
 
 # How long after boot to keep watching, and how often to look. The incident's
 # post-reboot failure landed ~8 min after the VM came up.
@@ -233,7 +233,7 @@ process_repo() {
     if api POST "/repos/$repo/actions/runs/$run_id/rerun-failed-jobs" >/dev/null; then
       log "RERUN $key (failed $updated_at, attempt $attempt)"
       state_record "$key"
-      note_run "$run_id" "Infrastructure, not code: the marathon host rebooted during this run (Windows Update), which kills the in-flight job and usually breaks the one GitHub re-dispatches straight after, while WSL2's network stack is still settling. Retried automatically by ci-rerun-after-reboot."
+      note_run "$run_id" "Infrastructure, not code: the joggo host rebooted during this run (Windows Update), which kills the in-flight job and usually breaks the one GitHub re-dispatches straight after, while WSL2's network stack is still settling. Retried automatically by ci-rerun-after-reboot."
       RERUNS_THIS_PASS=$(( RERUNS_THIS_PASS + 1 ))
     else
       # Most often the run is already re-running (someone beat us to it).

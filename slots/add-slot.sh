@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # add-ci-slot.sh — prepare a second (or third) containerized runner slot.
 #
-# WHY THIS EXISTS. `marathon-slot@.service` is a template and nearly everything in
+# WHY THIS EXISTS. `joggo-slot@.service` is a template and nearly everything in
 # run-containerized-slot.sh is already keyed on the slot number — the network,
 # both container names, both volumes, the _diag directory, the pause flag and the
 # fail stamp. Exactly ONE thing is not: RUNNER_ROOT, which defaults to
@@ -18,7 +18,7 @@
 #   - copies the runner install to /home/ghrunner/actions-runner-<N>
 #   - strips the copied credentials, because a copied credential set IS the same
 #     registration and would reproduce the bug this script exists to avoid
-#   - writes /etc/systemd/system/marathon-slot@<N>.service.d/root.conf
+#   - writes /etc/systemd/system/joggo-slot@<N>.service.d/root.conf
 #   - prints the exact config.sh line to run next
 #
 #   - it does NOT register the runner. That needs an org registration token which
@@ -55,7 +55,7 @@ esac
 
 SRC="/home/ghrunner/actions-runner"
 DST="/home/ghrunner/actions-runner-${SLOT}"
-DROPIN_DIR="/etc/systemd/system/marathon-slot@${SLOT}.service.d"
+DROPIN_DIR="/etc/systemd/system/joggo-slot@${SLOT}.service.d"
 DROPIN="$DROPIN_DIR/root.conf"
 RUNNER_USER="${RUNNER_USER:-ghrunner}"
 
@@ -66,15 +66,15 @@ say()  { echo "[add-ci-slot] $*"; }
 
 # ---- undo -------------------------------------------------------------------
 if [ "$UNDO" = "1" ]; then
-  if systemctl is-active --quiet "marathon-slot@${SLOT}.service"; then
-    die "marathon-slot@${SLOT} is ACTIVE — 'systemctl disable --now marathon-slot@${SLOT}' first" 3
+  if systemctl is-active --quiet "joggo-slot@${SLOT}.service"; then
+    die "joggo-slot@${SLOT} is ACTIVE — 'systemctl disable --now joggo-slot@${SLOT}' first" 3
   fi
   say "removing $DROPIN_DIR"
   rm -rf "$DROPIN_DIR"
   systemctl daemon-reload
   if [ -d "$DST" ]; then
     say "removing $DST"
-    say "NOTE: this de-registers nothing server-side. Remove the 'marathon-${SLOT}' runner"
+    say "NOTE: this de-registers nothing server-side. Remove the 'joggo-${SLOT}' runner"
     say "      in the GitHub org settings too, or it lingers as an offline entry."
     rm -rf "$DST"
   fi
@@ -179,8 +179,8 @@ minted by a person and used immediately:
      sudo -u ${RUNNER_USER} bash -c 'cd ${DST} && ./config.sh \\
        --url https://github.com/example-org \\
        --token <TOKEN> \\
-       --name marathon-${SLOT} \\
-       --labels self-hosted,linux,x64,marathon \\
+       --name joggo-${SLOT} \\
+       --labels self-hosted,linux,x64,joggo \\
        --unattended'
 
      SAME labels, so GitHub dispatches the same jobs to it.
@@ -189,18 +189,18 @@ minted by a person and used immediately:
 
   3. Start it and watch the first acquisition:
 
-     systemctl enable --now marathon-slot@${SLOT}
-     journalctl -u marathon-slot@${SLOT}.service -f
+     systemctl enable --now joggo-slot@${SLOT}
+     journalctl -u joggo-slot@${SLOT}.service -f
 
   4. Prove it is real parallelism, not two runners trading one session:
 
-     gh workflow run runner-smoke.yml --repo example-org/marathon
-     gh workflow run runner-smoke.yml --repo example-org/marathon
-     # both should run AT THE SAME TIME, on marathon and marathon-${SLOT}
+     gh workflow run runner-smoke.yml --repo example-org/joggo
+     gh workflow run runner-smoke.yml --repo example-org/joggo
+     # both should run AT THE SAME TIME, on joggo and joggo-${SLOT}
 
 Rollback is one command and slot 1 is untouched throughout:
 
-     systemctl disable --now marathon-slot@${SLOT}
+     systemctl disable --now joggo-slot@${SLOT}
      sudo slots/add-slot.sh ${SLOT} --undo
 
 ========================================================================

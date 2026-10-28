@@ -1,5 +1,5 @@
 ﻿<#
-  deploy-monitor.ps1 — WPF deploy monitor for the marathon self-hosted runner.
+  deploy-monitor.ps1 — WPF deploy monitor for the joggo self-hosted runner.
 
   Two window types (design-bucket/Deploy Monitor.dc.html):
     * Control plane (single, always one): runner badge, running/queued/failed
@@ -24,16 +24,16 @@ param(
   [string]$Repo = "example-org/appone",
   [int]$IntervalSec = 15,
   [string]$WslDistro = "Ubuntu",
-  [string]$RunnerService = "actions.runner.example-org.marathon.service",
+  [string]$RunnerService = "actions.runner.example-org.joggo.service",
   # The containerized slot logs to its OWN unit, so after the 2026-09-05 cutover the
   # monitor went blind — it was still grepping the (now inactive) persistent unit and
   # showed no card at all for a job that ran fine. Read BOTH units so the monitor works
   # on either model, and during a cutover, without a flag.
-  # A GLOB, not one unit. This was "marathon-slot@1.service" and went blind the day a
+  # A GLOB, not one unit. This was "joggo-slot@1.service" and went blind the day a
   # second slot was added (2026-09-29): a job on slot 2 produced no runner line
   # and no busy badge, so the card showed an idle box while a job was running.
   # systemd accepts the pattern directly in journalctl -u.
-  [string]$SlotService = "marathon-slot@*",
+  [string]$SlotService = "joggo-slot@*",
   # The pause lever is a FLAG FILE, not a systemd state: run-containerized-slot.sh reads it
   # before it builds anything and holds without a listener (slots/slot-pause.sh). That path is
   # the whole contract, which is why the monitor can drive the pause even on a box where
@@ -191,7 +191,7 @@ function Get-PauseState {
     # loop needs $( ) and $var through two levels of quoting into wsl.exe, which is precisely
     # the escaping that has bitten this box repeatedly.
     $dir=[System.IO.Path]::GetDirectoryName($PauseFlag) -replace '\\','/'
-    $cmd="systemctl list-units 'marathon-slot@*' --all --no-legend --no-pager 2>/dev/null | sed -E 's/^[^a-z]*marathon-slot@([0-9]+)\.service.*/U \1/'; ls $dir/ 2>/dev/null | grep -E '^[0-9]+\.paused' | sed 's/^/F /'; head -qn1 $dir/*.paused 2>/dev/null | head -1 | sed 's/^/S /'"
+    $cmd="systemctl list-units 'joggo-slot@*' --all --no-legend --no-pager 2>/dev/null | sed -E 's/^[^a-z]*joggo-slot@([0-9]+)\.service.*/U \1/'; ls $dir/ 2>/dev/null | grep -E '^[0-9]+\.paused' | sed 's/^/F /'; head -qn1 $dir/*.paused 2>/dev/null | head -1 | sed 's/^/S /'"
     $o=& wsl.exe -d $WslDistro -u root bash -c $cmd 2>$null
     if($o){
       $l=@($o | Where-Object { $_ -ne $null } | ForEach-Object { ([string]$_).Trim() })
@@ -339,13 +339,13 @@ $script:wmCache=@{}
 $script:wmRetry=@{}   # per-log re-read count, bounding the retry above
 function Get-WorkerMeta {
   # Two locations: the persistent runner's own _diag, and the containerized slots', which
-  # are bind-mounted to the host at /var/log/marathon-slots/<n>/_diag precisely so this lookup
+  # are bind-mounted to the host at /var/log/joggo-slots/<n>/_diag precisely so this lookup
   # keeps working (a slot's _diag used to be a throwaway volume, which is why the control
   # plane showed no card for a job that ran fine on 2026-09-05).
   # Now with MTIME, which is the only honest liveness signal available out here: the runner
   # writes to this log continuously while the job runs. `stat` prints in argument order, so
   # `ls -t`'s newest-first ordering survives the pipe.
-  $ls=$null; try { $ls=& wsl.exe -d $WslDistro -u root bash -c 'ls -t /home/ghrunner/actions-runner/_diag/Worker_*.log /var/log/marathon-slots/*/_diag/Worker_*.log 2>/dev/null | head -150 | xargs -r stat -c %Y:%n' 2>$null } catch {}
+  $ls=$null; try { $ls=& wsl.exe -d $WslDistro -u root bash -c 'ls -t /home/ghrunner/actions-runner/_diag/Worker_*.log /var/log/joggo-slots/*/_diag/Worker_*.log 2>/dev/null | head -150 | xargs -r stat -c %Y:%n' 2>$null } catch {}
   $files=@(); $mtOf=@{}
   foreach($ln in @($ls)){
     if($ln -match '^(\d+):(.+Worker_\d{8}-\d{6}-utc\.log)$'){
@@ -356,7 +356,7 @@ function Get-WorkerMeta {
     }
   }
   if($files.Count -eq 0){ return ,@() }
-  # Which slot wrote it, straight out of the path. /var/log/marathon-slots/<n>/_diag is a bind mount
+  # Which slot wrote it, straight out of the path. /var/log/joggo-slots/<n>/_diag is a bind mount
   # created per slot, so the number is authoritative; the persistent runner's own _diag has no
   # slot and reports $null rather than pretending to be slot 1.
   $slotOf=@{}

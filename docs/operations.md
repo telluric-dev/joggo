@@ -5,25 +5,25 @@ description: >-
   watching jobs land, diagnosing failed runs from the slot's worker logs, jobs killed by Windows
   Update reboots and the automatic retry that covers them, the WSL2 command-quirks that bite shell
   automation, restarting WSL after config changes, and handling the dev-box/CI collisions. Operator
-  skill for the marathon platform repo. Trigger on "watch the runner", "why did the job fail",
-  "tail the runner log", "restart WSL", "job failed on marathon", "service container port collision",
+  skill for the joggo platform repo. Trigger on "watch the runner", "why did the job fail",
+  "tail the runner log", "restart WSL", "job failed on joggo", "service container port collision",
   "runner lost communication with the server", "job died after a reboot", "could not resolve host
   github.com in CI", "is this an OOM".
 ---
 
-# Operate & debug the live runner (`marathon`, Windows + WSL2)
+# Operate & debug the live runner (`joggo`, Windows + WSL2)
 
 The box is **both a dev machine and the CI runner**. Org is `example-org`; runner user `ghrunner`;
 runner dir `/home/ghrunner/actions-runner`.
 
 ⚠ **Since the 2026-09-05 containerized-slot cutover, jobs do NOT run under
-`actions.runner.example-org.marathon.service`.** That unit is `disabled` *by design* — finding it
+`actions.runner.example-org.joggo.service`.** That unit is `disabled` *by design* — finding it
 inactive is not a fault, and not the reason a job is missing.
 
 | | Unit | Per-job logs |
 |---|---|---|
-| **Current** — containerized slot | `marathon-slot@1.service` (`run-containerized-slot.sh`; containers `marathon-runner-1` + `marathon-dind-1`) | **`/var/log/marathon-slots/1/_diag/`** |
-| Fallback — persistent runner | `actions.runner.example-org.marathon.service` (disabled) | `/home/ghrunner/actions-runner/_diag/` |
+| **Current** — containerized slot | `joggo-slot@1.service` (`run-containerized-slot.sh`; containers `joggo-runner-1` + `joggo-dind-1`) | **`/var/log/joggo-slots/1/_diag/`** |
+| Fallback — persistent runner | `actions.runner.example-org.joggo.service` (disabled) | `/home/ghrunner/actions-runner/_diag/` |
 
 Never enable both — they `Conflicts=`. See **upgrade-ci-runner** for cutover/rollback and posture.
 
@@ -46,20 +46,20 @@ back empty — which reads as "nothing happened" rather than "wrong window". Con
 
 ## Watch jobs land
 ```bash
-journalctl -u marathon-slot@1.service -f --no-pager -n 0 \
+journalctl -u joggo-slot@1.service -f --no-pager -n 0 \
   | grep --line-buffered -E 'Running job:|completed with result:|error|Error'
 ```
 A green pipeline is `test → build-and-push → verify-deploy`, each a separate "Running job …" line.
 
 ## Diagnose a failed job
-Authoritative per-job logs are in `/var/log/marathon-slots/1/_diag/Worker_*.log` (newest = latest run):
+Authoritative per-job logs are in `/var/log/joggo-slots/1/_diag/Worker_*.log` (newest = latest run):
 ```bash
-wsl -d Ubuntu -u root bash -c 'cd /var/log/marathon-slots/1/_diag && ls -t Worker_*.log | head -1 \
+wsl -d Ubuntu -u root bash -c 'cd /var/log/joggo-slots/1/_diag && ls -t Worker_*.log | head -1 \
   | xargs grep -nE "##\[error\]|ERR |Docker start fail|Process completed with exit code|self-installer"'
 ```
 On the slot every job rolls a **new** `Worker_*.log`, so "did the newest filename change" is itself
 a freshness test. If the newest file is days old, jobs are not reaching this unit at all — check
-`systemctl is-enabled marathon-slot@1` before reading anything into the log's contents.
+`systemctl is-enabled joggo-slot@1` before reading anything into the log's contents.
 Read the surrounding lines with `sed -n "<start>,<end>p"` (via the same `ls … | xargs sed` pattern).
 To get a step's real stderr, **reproduce it** as `ghrunner` using the runner's bundled node and the
 checked-out repo at `~/actions-runner/_work/<repo>/<repo>` (set `GITHUB_WORKSPACE`, the action inputs
@@ -98,7 +98,7 @@ as `INPUT_*`, etc.).
   (active hours / `NoAutoRebootWithLoggedOnUsers`), which is a host decision, not a runner one.
 
 ## Automatic retry after a reboot
-`ci-rerun-after-reboot.service` (oneshot, enabled, ordered after `marathon-slot@1`) re-runs jobs this box
+`ci-rerun-after-reboot.service` (oneshot, enabled, ordered after `joggo-slot@1`) re-runs jobs this box
 lost to a reboot, so neither failure class above needs a human.
 
 ```bash
@@ -108,9 +108,9 @@ tail -20 /var/log/ci-rerun.log                                  # what it has do
 - **Window** — previous boot's end (from `journalctl --list-boots -o json`) through boot + 35 min.
   It *polls* across that window rather than checking once, because the post-reboot failure lands
   several minutes after boot; a one-shot check at boot is too early to see it.
-- **Scope** — a run qualifies only if one of its **failed** jobs reports `runner_name: marathon`.
+- **Scope** — a run qualifies only if one of its **failed** jobs reports `runner_name: joggo`.
   Match on the runner *name*, not the label set: 10 of the 12 callers use the subset labels
-  (`self-hosted, linux, x64`) with no `marathon` in them. Repo list: `/etc/ci-rerun/repos`, kept in
+  (`self-hosted, linux, x64`) with no `joggo` in them. Repo list: `/etc/ci-rerun/repos`, kept in
   step with the `-Repos` default in `monitor/day-report.ps1`.
 - **Rails** — one retry per run ever (`/var/lib/ci-rerun/state.json`, survives reboots), skips runs
   already at attempt ≥3, caps at 10 per pass, never fails the boot transaction.
@@ -159,7 +159,7 @@ the runner shows **Listening for Jobs**, tailscale is online, and `$PATH` has ze
 ## Guardrails
 - Never delete/overwrite the user's running dev containers, databases, or data without asking; prefer
   `stop` over `rm` and say how to restart (`docker start <name>`).
-- The reusable workflows' `uses: example-org/marathon/...@main` only resolve once this repo is
+- The reusable workflows' `uses: example-org/joggo/...@main` only resolve once this repo is
   pushed to the `example-org` org on GitHub.
 - Before **changing** the runner (cutover, version upgrade, self-heal edits, WSL config), use the
   **upgrade-ci-runner** skill: restore point → baseline `runner-smoke` → change → smoke → keep or

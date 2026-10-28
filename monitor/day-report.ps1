@@ -29,7 +29,7 @@ param(
   [string] $StateDir = "$env:USERPROFILE\.claude\ci-day",
   # How far back to look for failures that are still open (never superseded by a pass).
   [int] $LookbackDays = 14,
-  # Repos to watch. Defaults to everything that has ever run on marathon.
+  # Repos to watch. Defaults to everything that has ever run on joggo.
   [string[]] $Repos = @(
     'example-org/appthree', 'example-org/appthree', 'example-org/appthree',
     'example-org/appthree', 'example-org/appthree', 'example-org/appthree',
@@ -268,7 +268,7 @@ $null = $sb.AppendLine(@"
 </style>
 <div class="wrap">
 <header>
-  <div class="eyebrow">example-org · runner <span class="mono">marathon</span> · day runs 03:00 → 03:00 local (00:00Z)</div>
+  <div class="eyebrow">example-org · runner <span class="mono">joggo</span> · day runs 03:00 → 03:00 local (00:00Z)</div>
   <h1>CI day — $dayLabel</h1>
   <p class="standfirst">Every job that finished today, newest last — plus any earlier failure that
     no later run has fixed yet. Updated $stamp UTC.</p>

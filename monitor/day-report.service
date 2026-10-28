@@ -1,6 +1,6 @@
 [Unit]
-Description=Render the CI day report (every marathon job that finished today)
-Documentation=file:/mnt/c/Users/you/marathon/monitor/day-report.ps1
+Description=Render the CI day report (every joggo job that finished today)
+Documentation=file:/mnt/c/Users/you/joggo/monitor/day-report.ps1
 After=network-online.target
 Wants=network-online.target
 
@@ -9,7 +9,7 @@ Type=oneshot
 # Windows-side PowerShell over WSL interop -- the renderer is a .ps1 and gh is
 # authenticated on the Windows side. Forward slashes on purpose: systemd treats
 # a backslash as an escape, and PowerShell accepts either.
-ExecStart=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:/Users/you/marathon/monitor/day-report.ps1
+ExecStart=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:/Users/you/joggo/monitor/day-report.ps1
 # A full render walks ~12 repos and reads job logs; measured ~45 s, but the API
 # can be slow and a stuck render must not wedge the timer.
 TimeoutStartSec=900

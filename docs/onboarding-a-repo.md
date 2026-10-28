@@ -1,12 +1,12 @@
 # Client-Side CI Runbook — Use the Self-Hosted Runner From a Project Repo
 
 **Audience:** a developer (or an AI agent) on **any computer**, working in **any of the org's repos**,
-who wants that repo's CI to build Docker images on the shared self-hosted runner (`marathon`) instead
+who wants that repo's CI to build Docker images on the shared self-hosted runner (`joggo`) instead
 of paid GitHub-hosted minutes. The runner itself is already set up — see the server-side runbook
-[self-hosted-marathon-runner-setup.md](self-hosted-marathon-runner-setup.md). This document is the **consumer**
+[self-hosted-joggo-runner-setup.md](self-hosted-joggo-runner-setup.md). This document is the **consumer**
 side: what you add **inside a project repo**.
 
-**Goal:** push to a repo → a build runs on `marathon` → an x86-64 image lands in GHCR → production
+**Goal:** push to a repo → a build runs on `joggo` → an x86-64 image lands in GHCR → production
 pulls it. **No secrets, no PAT, no runner software** live in the project repo — only a workflow file.
 
 ---
@@ -14,7 +14,7 @@ pulls it. **No secrets, no PAT, no runner software** live in the project repo �
 ## 0. Mental model (read first)
 
 ```
-your repo  ──push──►  GitHub Actions  ──dispatches job──►  marathon (home PC, outbound-only)
+your repo  ──push──►  GitHub Actions  ──dispatches job──►  joggo (home PC, outbound-only)
                                                               │ builds x86-64 image
                                                               │ pushes with per-job GITHUB_TOKEN
                                                               ▼
@@ -36,18 +36,18 @@ your repo  ──push──►  GitHub Actions  ──dispatches job──►  m
 
 ## 1. Prerequisites (one-time, per repo — needs an org owner)
 
-Before a repo's jobs will run on `marathon`, an org owner must allow it. This is the security gate
+Before a repo's jobs will run on `joggo`, an org owner must allow it. This is the security gate
 from the server runbook (§6.1) — self-hosted runners must never be exposed to public/fork code.
 
-🧑 OWNER: **no onboarding action needed** — `marathon-runners` is set to **All repositories**
+🧑 OWNER: **no onboarding action needed** — `joggo-runners` is set to **All repositories**
 (verified 2026-09-05), so every org repo can already reach the runner. Two things on that
-page (**Settings → Actions → Runner groups → `marathon-runners`**) are still worth confirming:
+page (**Settings → Actions → Runner groups → `joggo-runners`**) are still worth confirming:
 - **"Allow public repositories"** stays **unchecked** — the org has 4 public repos, and
   nothing else now stands between them and the runner.
 - The repo being onboarded is **private**.
 
 Hard rules:
-- ✅ The repo must be **private**. Never route a public repo onto `marathon`.
+- ✅ The repo must be **private**. Never route a public repo onto `joggo`.
 - ✅ **Settings → Actions → General → Fork PR workflows**: keep "Require approval for all outside
   collaborators" (or stricter). A self-hosted runner must not execute untrusted fork code.
 
@@ -69,7 +69,7 @@ on:
 
 jobs:
   build:
-    uses: example-org/marathon/.github/workflows/build-and-push.yml@main
+    uses: example-org/joggo/.github/workflows/build-and-push.yml@main
     with:
       image-name: my-service        # optional; defaults to the repo name
       context: .
@@ -82,7 +82,7 @@ jobs:
 ```
 
 That's it. The reusable workflow already:
-- runs on `runs-on: [self-hosted, linux, x64, marathon]`,
+- runs on `runs-on: [self-hosted, linux, x64, joggo]`,
 - logs into GHCR with the job's `GITHUB_TOKEN`,
 - tags the image (`sha-<commit>`, branch name, and `latest` on the default branch;
   pass `publish-latest: false` to suppress `latest` when this repo publishes SEVERAL
@@ -99,7 +99,7 @@ tags instead of the default `sha-<sha>`, use the `images` and `tag-format` input
 
 ```yaml
   build:
-    uses: example-org/marathon/.github/workflows/build-and-push.yml@main
+    uses: example-org/joggo/.github/workflows/build-and-push.yml@main
     with:
       tag-format: sha                 # bare <sha> + latest on default branch (also: prefixed-sha [default], sha-short)
       build-args: |                   # applied to EVERY image
@@ -119,12 +119,12 @@ merged with the global ones. Omit `images` for the single-image fast path above.
 For a **test** job that needs Postgres, use the reusable `node-test.yml` instead of running services
 directly. It runs the job **inside a container** and attaches a Postgres **service with no host-port
 mapping**, reachable at `postgres:5432` over the private job network — so it can never collide with a
-dev database on the shared runner. This is the recommended pattern on `marathon` (which doubles as a
+dev database on the shared runner. This is the recommended pattern on `joggo` (which doubles as a
 dev box).
 
 ```yaml
   test:
-    uses: example-org/marathon/.github/workflows/node-test.yml@main
+    uses: example-org/joggo/.github/workflows/node-test.yml@main
     with:
       postgres-user: myapp
       postgres-password: myapp
@@ -153,7 +153,7 @@ broken Dockerfiles before merge:
 ```yaml
   validate:
     if: github.event_name == 'pull_request'
-    uses: example-org/marathon/.github/workflows/build-and-push.yml@main
+    uses: example-org/joggo/.github/workflows/build-and-push.yml@main
     with: { push: false }
     permissions: { contents: read, packages: write }
 ```
@@ -169,7 +169,7 @@ on:
   push: { branches: [main], paths: ['apps/**', 'docker/**', 'Dockerfile'] }
 jobs:
   build-and-push:
-    runs-on: [self-hosted, linux, x64, marathon]    # <- the runner's labels
+    runs-on: [self-hosted, linux, x64, joggo]    # <- the runner's labels
     permissions: { contents: read, packages: write }
     steps:
       - uses: actions/checkout@v4
@@ -191,7 +191,7 @@ Prefer §2 — keep build logic in one place.
 
 ## 4. Verify a build worked
 
-1. **Actions tab** of the repo → your run → the `build` job shows it ran on `marathon`
+1. **Actions tab** of the repo → your run → the `build` job shows it ran on `joggo`
    (annotation: *"This job ran on a self-hosted runner"*), and **no GitHub-hosted minutes** were billed.
 2. **Package appears:** repo (or org) → **Packages** → `ghcr.io/example-org/<image-name>` with the new
    `sha-…` / `latest` tags.
@@ -213,7 +213,7 @@ GHCR packages are **private by default**, so production must authenticate to pul
 ## 6. Onboard a new repo — checklist
 
 - [ ] Repo is **private**.
-- [ ] Owner added it to the **`marathon-runners`** runner group (§1).
+- [ ] Owner added it to the **`joggo-runners`** runner group (§1).
 - [ ] Added `.github/workflows/ci.yml` calling the reusable workflow (§2).
 - [ ] Job has `permissions: { contents: read, packages: write }`.
 - [ ] A `Dockerfile` exists at the path you referenced.
@@ -224,9 +224,9 @@ GHCR packages are **private by default**, so production must authenticate to pul
 
 ## 7. Fallback when the PC is down
 
-`marathon` is a single home PC. If it's off, jobs pinned to it **queue** until it returns.
+`joggo` is a single home PC. If it's off, jobs pinned to it **queue** until it returns.
 - **Pure cost-min (default):** accept "PC down = builds pause." Jobs resume when it's back.
-- **Resilience:** also allow GitHub-hosted as a fallback, e.g. `runs-on: [self-hosted, marathon]`
+- **Resilience:** also allow GitHub-hosted as a fallback, e.g. `runs-on: [self-hosted, joggo]`
   with a matrix or a conditional second job on `ubuntu-latest`. This costs paid minutes but keeps CI
   flowing. Choose per repo.
 
@@ -236,7 +236,7 @@ GHCR packages are **private by default**, so production must authenticate to pul
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Job stuck **Queued** forever | Runner offline (PC asleep/off/WSL down), or repo not in `marathon-runners`. Check org → Runners shows `marathon` **Idle/green**; confirm runner-group membership (§1). |
+| Job stuck **Queued** forever | Runner offline (PC asleep/off/WSL down), or repo not in `joggo-runners`. Check org → Runners shows `joggo` **Idle/green**; confirm runner-group membership (§1). |
 | `denied: permission_granted... packages` on push | Missing `permissions: packages: write` in the job, or pushing to a different org/owner than `github.repository`. |
 | `permission denied ... /var/run/docker.sock` | Runner user not in `docker` group on the host — a server-side fix (server runbook §2.3), not a repo change. |
 | Image is `arm64` / won't run in prod | `platforms` not `linux/amd64`. The reusable workflow defaults correctly; check any inline override. |
@@ -250,8 +250,8 @@ GHCR packages are **private by default**, so production must authenticate to pul
 - ✅ Keep the repo **private**; rely on the per-job `GITHUB_TOKEN`; request **least** permissions
   (`contents: read`, `packages: write`, nothing more).
 - ✅ Pin the reusable workflow to a tag/SHA for production repos.
-- ❌ Never store AWS/SSH/production secrets in a build that runs on `marathon` — the box is
+- ❌ Never store AWS/SSH/production secrets in a build that runs on `joggo` — the box is
   deliberately credential-free (server runbook §6.2). If a deploy step needs prod secrets, run that
   step on a **separate, GitHub-hosted** job, not on the self-hosted runner.
-- ❌ Never `runs-on: ubuntu-latest`-style a job that depends on `marathon`-local state; treat the
+- ❌ Never `runs-on: ubuntu-latest`-style a job that depends on `joggo`-local state; treat the
   runner as shared and (eventually) ephemeral.

@@ -1,7 +1,7 @@
 [Unit]
 Description=Watchdog for a wedged GitHub Actions runner listener
-Documentation=https://github.com/example-org/marathon
-After=actions.runner.example-org.marathon.service
+Documentation=https://github.com/example-org/joggo
+After=actions.runner.example-org.joggo.service
 
 [Service]
 Type=oneshot

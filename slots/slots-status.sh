@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ci-slots-status.sh — what every runner slot is doing, right now.
 #
-# WHY THIS EXISTS. The marathon board is a FAILURE LEDGER: one card per deploy
+# WHY THIS EXISTS. The joggo board is a FAILURE LEDGER: one card per deploy
 # identity, opened by a red run and closed only by a green one. In-flight work
 # appears nowhere on it, so "is anything running?" was being answered by reading
 # a card that describes a run from hours ago. `ci-pause status` answers it for
@@ -22,28 +22,28 @@ set -uo pipefail
 JSON=0
 [ "${1:-}" = "--json" ] && JSON=1
 
-slots=$(systemctl list-units 'marathon-slot@*' --all --no-legend --no-pager 2>/dev/null \
-        | sed -n 's/^[[:space:]]*marathon-slot@\([0-9]\+\)\.service.*/\1/p' | sort -n)
+slots=$(systemctl list-units 'joggo-slot@*' --all --no-legend --no-pager 2>/dev/null \
+        | sed -n 's/^[[:space:]]*joggo-slot@\([0-9]\+\)\.service.*/\1/p' | sort -n)
 [ -n "$slots" ] || slots=1
 
 now_epoch=$(date +%s)
 rows=""
 
 for s in $slots; do
-  unit=$(systemctl is-active "marathon-slot@${s}.service" 2>/dev/null || echo unknown)
+  unit=$(systemctl is-active "joggo-slot@${s}.service" 2>/dev/null || echo unknown)
   paused=no
   [ -f "/var/lib/ci-slot/${s}.paused" ] && paused=yes
 
   # The worker container is the job. Its absence means idle, not broken.
-  runner_c=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -x "marathon-runner-${s}" || true)
-  dind_c=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -x "marathon-dind-${s}" || true)
+  runner_c=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -x "joggo-runner-${s}" || true)
+  dind_c=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -x "joggo-dind-${s}" || true)
 
   # Which job: a Worker_*.log is created per job and written continuously while it
   # runs, so FRESHNESS is the signal -- not a log line. The obvious-looking grep
   # for "Running job:" finds nothing in these logs (they record step names, not a
   # job banner), which made an earlier version report "idle" while two jobs were
   # demonstrably executing.
-  diag="/var/log/marathon-slots/${s}/_diag"
+  diag="/var/log/joggo-slots/${s}/_diag"
   job=""
   job_age=0
   newest=$(ls -t "$diag"/Worker_*.log 2>/dev/null | head -1)

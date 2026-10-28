@@ -56,8 +56,8 @@ param(
   # not actually recover the memory (e.g. the pressure is Windows-side, not WSL).
   [int]$CooldownMinutes = 90,
   [string]$Distro = "Ubuntu",
-  [string]$StateFile = "$env:ProgramData\marathon\wsl-mem-guard.state.json",
-  [string]$LogFile   = "$env:ProgramData\marathon\wsl-mem-guard.log",
+  [string]$StateFile = "$env:ProgramData\joggo\wsl-mem-guard.state.json",
+  [string]$LogFile   = "$env:ProgramData\joggo\wsl-mem-guard.log",
   [switch]$DryRun,
   [switch]$Status
 )
@@ -92,7 +92,7 @@ function Invoke-Wsl([string]$cmd, [int]$TimeoutSec = 25){
   # THE COMMAND TRAVELS AS BASE64. Quoting a shell command through PowerShell's native
   # argument packing and then through wsl.exe has failed in this repo repeatedly and
   # silently: a single-quoted glob was swallowed here, so `systemctl list-units
-  # 'marathon-slot@*'` arrived with no pattern and matched EVERY unit on the box. The guard
+  # 'joggo-slot@*'` arrived with no pattern and matched EVERY unit on the box. The guard
   # read that as "no slots" and would have skipped straight past the hold to a restart.
   # Base64 is [A-Za-z0-9+/=] only, so there is nothing left for either layer to eat.
   $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($cmd))
@@ -143,7 +143,7 @@ function Get-RunningJobs {
 
 function Get-Slots {
   # Slot numbers from systemd, so this follows the box rather than a hardcoded list.
-  $r = Invoke-Wsl "systemctl list-units 'marathon-slot@*' --all --no-legend --no-pager 2>/dev/null | sed -E 's/^[^a-z]*marathon-slot@([0-9]+)\.service.*/\1/'" 15
+  $r = Invoke-Wsl "systemctl list-units 'joggo-slot@*' --all --no-legend --no-pager 2>/dev/null | sed -E 's/^[^a-z]*joggo-slot@([0-9]+)\.service.*/\1/'" 15
   if(-not $r.ok){ return @() }
   @($r.out -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' })
 }

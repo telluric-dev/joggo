@@ -1,19 +1,19 @@
 ---
 name: add-ci-slot
 description: >
-  Use when the marathon box needs MORE CONCURRENCY — jobs queuing behind each other, or
+  Use when the joggo box needs MORE CONCURRENCY — jobs queuing behind each other, or
   GitHub dropping them with "The job was not acquired by Runner of type self-hosted even
   after multiple attempts". Covers why a second slot needs a second REGISTRATION (not just
   a second systemd instance), the one-command preparation, the human-only token step, how
   to prove real parallelism rather than two runners trading one session, and what to
-  re-check afterwards. Operator skill for the marathon platform repo. Trigger on
+  re-check afterwards. Operator skill for the joggo platform repo. Trigger on
   "add a slot", "second slot", "more capacity", "jobs are queuing", "jobs being dropped",
   "not acquired by runner", "run two jobs at once", "parallel runners".
 ---
 
 # Add a runner slot
 
-⚠ **A second systemd instance is NOT a second slot.** `systemctl enable --now marathon-slot@2`
+⚠ **A second systemd instance is NOT a second slot.** `systemctl enable --now joggo-slot@2`
 on its own gives you **zero** extra concurrency. A GitHub runner registration holds exactly
 one session, so slot 2 would point at slot 1's `.credentials`, lose the session, and retry
 about every 95 seconds forever. The launcher says so in its own preflight:
@@ -31,10 +31,10 @@ launcher change to make**:
 
 | already per-slot | value |
 |---|---|
-| network | `marathon-slot-$SLOT` |
-| containers | `marathon-runner-$SLOT`, `marathon-dind-$SLOT` |
-| volumes | `marathon-slot-${SLOT}-work`, `marathon-slot-${SLOT}-root` |
-| diag | `/var/log/marathon-slots/${SLOT}/_diag` |
+| network | `joggo-slot-$SLOT` |
+| containers | `joggo-runner-$SLOT`, `joggo-dind-$SLOT` |
+| volumes | `joggo-slot-${SLOT}-work`, `joggo-slot-${SLOT}-root` |
+| diag | `/var/log/joggo-slots/${SLOT}/_diag` |
 | pause / fail flags | `/var/lib/ci-slot/${SLOT}.paused`, `.fails` |
 
 Exactly one thing is shared: `RUNNER_ROOT="${RUNNER_ROOT:-/home/ghrunner/actions-runner}"`.
@@ -61,8 +61,8 @@ backup is a hope, not a rollback. See **upgrade-ci-runner** §1.
 still serves:
 
 ```bash
-gh workflow run runner-smoke.yml --repo example-org/marathon
-gh run list --repo example-org/marathon --workflow=runner-smoke.yml --limit 1
+gh workflow run runner-smoke.yml --repo example-org/joggo
+gh run list --repo example-org/joggo --workflow=runner-smoke.yml --limit 1
 ```
 
 ## The procedure
@@ -73,7 +73,7 @@ sudo slots/add-slot.sh 2          # prepare: root + drop-in, no registration, no
 
 That copies the runner install to `/home/ghrunner/actions-runner-2`, **strips the copied
 credentials** (a copied credential set is the same registration — that is the whole bug),
-and writes `/etc/systemd/system/marathon-slot@2.service.d/root.conf`. It then prints the two
+and writes `/etc/systemd/system/joggo-slot@2.service.d/root.conf`. It then prints the two
 commands only a human can run.
 
 **The token step is deliberately not automated.** It expires in ~1 hour and the hardening
@@ -85,7 +85,7 @@ rule is no privileged secrets on the CI box (**setup-ci-runner** §6):
 ```bash
 sudo -u ghrunner bash -c 'cd /home/ghrunner/actions-runner-2 && ./config.sh \
   --url https://github.com/example-org --token <TOKEN> \
-  --name marathon-2 --labels self-hosted,linux,x64,marathon --unattended'
+  --name joggo-2 --labels self-hosted,linux,x64,joggo --unattended'
 ```
 
 **Same labels** so GitHub dispatches the same jobs. **Different name.** Do **not** pass
@@ -95,8 +95,8 @@ which looks like success right up until nothing runs in parallel.
 3. Start it and watch the first acquisition rather than discovering it later:
 
 ```bash
-systemctl enable --now marathon-slot@2
-journalctl -u marathon-slot@2.service -f
+systemctl enable --now joggo-slot@2
+journalctl -u joggo-slot@2.service -f
 ```
 
 ## Prove it — two runners trading one session looks identical at a glance
@@ -104,17 +104,17 @@ journalctl -u marathon-slot@2.service -f
 Dispatch two smokes **at once**. One after the other proves nothing.
 
 ```bash
-gh workflow run runner-smoke.yml --repo example-org/marathon
-gh workflow run runner-smoke.yml --repo example-org/marathon
-gh run list --repo example-org/marathon --workflow=runner-smoke.yml --limit 2
+gh workflow run runner-smoke.yml --repo example-org/joggo
+gh workflow run runner-smoke.yml --repo example-org/joggo
+gh run list --repo example-org/joggo --workflow=runner-smoke.yml --limit 2
 ```
 
-Both must be `in_progress` **simultaneously**, on `marathon` and `marathon-2`. If the second
-waits for the first, the registration did not take — check that `marathon-slot@2` is really using
+Both must be `in_progress` **simultaneously**, on `joggo` and `joggo-2`. If the second
+waits for the first, the registration did not take — check that `joggo-slot@2` is really using
 its own root:
 
 ```bash
-systemctl show marathon-slot@2.service -p Environment
+systemctl show joggo-slot@2.service -p Environment
 ls -l /home/ghrunner/actions-runner-2/.credentials
 ```
 
@@ -146,11 +146,11 @@ jobs before declaring victory.
 Slot 1 is untouched throughout, which is what makes this safer than the original cutover.
 
 ```bash
-systemctl disable --now marathon-slot@2
+systemctl disable --now joggo-slot@2
 sudo slots/add-slot.sh 2 --undo        # removes the drop-in and the runner root
 ```
 
-`--undo` does **not** de-register server-side. Remove the `marathon-2` runner in the GitHub
+`--undo` does **not** de-register server-side. Remove the `joggo-2` runner in the GitHub
 org settings too, or it lingers as an offline entry.
 
 ## Gotcha: measuring whether it helped

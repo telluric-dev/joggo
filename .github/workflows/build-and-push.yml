@@ -1,6 +1,6 @@
 # Reusable build-and-push workflow for the org's self-hosted CI runner.
 #
-# Companion to ../../self-hosted-marathon-runner-setup.md (server) and
+# Companion to ../../self-hosted-joggo-runner-setup.md (server) and
 # ../../client-project-ci-setup.md (consumer). Runs on the home-PC self-hosted
 # runner, builds x86-64 image(s), and pushes to GHCR using the built-in
 # GITHUB_TOKEN — no long-lived registry PAT lives on the runner.
@@ -9,7 +9,7 @@
 #
 #   jobs:
 #     build:
-#       uses: example-org/marathon/.github/workflows/build-and-push.yml@main
+#       uses: example-org/joggo/.github/workflows/build-and-push.yml@main
 #       with:
 #         image-name: my-service        # optional; defaults to the repo name
 #         dockerfile: ./Dockerfile
@@ -19,7 +19,7 @@
 #
 #   jobs:
 #     build:
-#       uses: example-org/marathon/.github/workflows/build-and-push.yml@main
+#       uses: example-org/joggo/.github/workflows/build-and-push.yml@main
 #       with:
 #         tag-format: sha               # bare <sha> (+ latest on default branch)
 #         build-args: |                 # applied to ALL images
@@ -131,7 +131,7 @@ on:
         description: "JSON array of runs-on labels for the self-hosted runner."
         type: string
         required: false
-        default: '["self-hosted", "linux", "x64", "marathon"]'
+        default: '["self-hosted", "linux", "x64", "joggo"]'
     secrets:
       node_auth_token:
         required: false
@@ -233,7 +233,7 @@ jobs:
         with:
           # Put the buildkit builder in the SLOT DIND's network namespace instead of giving
           # it one of its own. That namespace is the one the runner hardening actually
-          # covers: marathon-dind-1 runs with --sysctl net.ipv6.conf.all.disable_ipv6=1 and reads
+          # covers: joggo-dind-1 runs with --sysctl net.ipv6.conf.all.disable_ipv6=1 and reads
           # 1 on the box. A builder in its OWN namespace reads 0 — measured 2026-09-13 by
           # running a container on the slot daemon — which is why the slot-level guard never
           # reached the build itself.

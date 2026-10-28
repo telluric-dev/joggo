@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# take-restore-point.sh — capture a RESTORABLE snapshot of the marathon runner.
+# take-restore-point.sh — capture a RESTORABLE snapshot of the joggo runner.
 #
 # WHY THIS EXISTS. Three git tags (v1.0.0, v1.1.0, v2.0.0) were created so the runner
 # would be "easy to restore", and none of them can do it. A tag captures THIS REPO. The
@@ -33,7 +33,7 @@
 # committed, and it should not sit on shared storage.
 #
 # USAGE
-#   ./take-restore-point.sh                 # -> /mnt/c/Users/you/marathon-restore/
+#   ./take-restore-point.sh                 # -> /mnt/c/Users/you/joggo-restore/
 #   ./take-restore-point.sh /some/other/dir
 #   VERIFY_ONLY=1 ./take-restore-point.sh   # list what would be captured, write nothing
 #
@@ -41,12 +41,12 @@
 # modified by a running job (the job writes to a container volume, not here).
 set -uo pipefail
 
-DEST="${1:-/mnt/c/Users/you/marathon-restore}"
+DEST="${1:-/mnt/c/Users/you/joggo-restore}"
 RUNNER_ROOT="${RUNNER_ROOT:-/home/ghrunner/actions-runner}"
 VERIFY_ONLY="${VERIFY_ONLY:-0}"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
-OUT="$DEST/marathon-restore-${STAMP}.tar.gz"
-MANIFEST="$DEST/marathon-restore-${STAMP}.MANIFEST.txt"
+OUT="$DEST/joggo-restore-${STAMP}.tar.gz"
+MANIFEST="$DEST/joggo-restore-${STAMP}.MANIFEST.txt"
 
 die() { echo "[restore-point] FATAL: $*" >&2; exit 1; }
 log() { echo "[restore-point] $*"; }
@@ -69,7 +69,7 @@ mkdir -p "$DEST" || die "cannot create $DEST"
 # inside the tarball as well as beside it. A snapshot nobody knows how to restore is not a
 # restore point — that is the whole lesson of A8.
 {
-    echo "marathon runner restore point"
+    echo "joggo runner restore point"
     echo "captured: $(date -u +%Y-%m-%dT%H:%M:%SZ)  host: $(hostname)"
     echo
     echo "== runner =="
@@ -78,7 +78,7 @@ mkdir -p "$DEST" || die "cannot create $DEST"
     echo "repo url: $(grep -o '"gitHubUrl"[^,]*' "$RUNNER_ROOT/.runner" 2>/dev/null)"
     echo
     echo "== units =="
-    for u in marathon-slot@1.service actions.runner.example-org.marathon.service runner-watchdog.timer runner-watchdog.service; do
+    for u in joggo-slot@1.service actions.runner.example-org.joggo.service runner-watchdog.timer runner-watchdog.service; do
         printf '%-48s %s / %s\n' "$u" "$(systemctl is-active "$u" 2>/dev/null)" "$(systemctl is-enabled "$u" 2>/dev/null)"
     done
     echo
@@ -87,7 +87,7 @@ mkdir -p "$DEST" || die "cannot create $DEST"
            /usr/local/sbin/ci-pause.sh 2>/dev/null
     echo
     echo "== images =="
-    docker image inspect marathon/actions-runner:local --format '{{.RepoTags}} {{.Id}}' 2>/dev/null || echo "runner image ABSENT"
+    docker image inspect joggo/actions-runner:local --format '{{.RepoTags}} {{.Id}}' 2>/dev/null || echo "runner image ABSENT"
     docker image inspect docker:28-dind --format '{{.RepoTags}} {{.Id}}' 2>/dev/null || echo "dind image ABSENT"
     echo
     cat <<'RESTORE'
@@ -96,24 +96,24 @@ mkdir -p "$DEST" || die "cannot create $DEST"
 This restores the RUNNING MACHINE. Pair it with the matching git tag for the repo side.
 
   1. Stop whatever is live, so nothing fights for the registration:
-       systemctl disable --now marathon-slot@1.service
-       systemctl stop actions.runner.example-org.marathon.service
+       systemctl disable --now joggo-slot@1.service
+       systemctl stop actions.runner.example-org.joggo.service
 
   2. Unpack (paths inside are absolute; -C / is intentional):
-       tar -xzpf marathon-restore-<stamp>.tar.gz -C /
+       tar -xzpf joggo-restore-<stamp>.tar.gz -C /
 
   3. Rebuild the runner image — it is deliberately NOT in this tarball:
-       docker build -t marathon/actions-runner:local <repo>/tools/runner-image
+       docker build -t joggo/actions-runner:local <repo>/tools/runner-image
 
   4. Reload and start the shape you want:
        systemctl daemon-reload
-       systemctl enable --now marathon-slot@1.service          # containerized (current)
+       systemctl enable --now joggo-slot@1.service          # containerized (current)
      or, to fall back to the pre-cutover persistent runner:
-       systemctl enable --now actions.runner.example-org.marathon.service
+       systemctl enable --now actions.runner.example-org.joggo.service
 
   5. Verify it is actually taking jobs — an active unit is not proof:
        runner-watchdog.sh --check
-       journalctl -u marathon-slot@1.service -f | grep 'Listening for Jobs'
+       journalctl -u joggo-slot@1.service -f | grep 'Listening for Jobs'
 
 IF THE REGISTRATION WAS REMOVED IN GITHUB'S UI while this snapshot sat on the shelf, the
 credentials in it are dead and no amount of unpacking will help. That is the one failure
@@ -169,13 +169,13 @@ case "$DEST" in
   /mnt/*)
     log "WARNING: $DEST is a Windows drive — DrvFs IGNORES the chmod above; this file is"
     log "         effectively world-readable and it contains runner credentials. Run, in PowerShell:"
-    log "         icacls \"\$env:USERPROFILE\\marathon-restore\" /inheritance:r /grant:r \"\$env:USERNAME:(OI)(CI)F\" /grant:r \"SYSTEM:(OI)(CI)F\" /T"
+    log "         icacls \"\$env:USERPROFILE\\joggo-restore\" /inheritance:r /grant:r \"\$env:USERNAME:(OI)(CI)F\" /grant:r \"SYSTEM:(OI)(CI)F\" /T"
     ;;
 esac
 
 log "verifying the archive holds what makes it a restore point:"
 listing="$(tar -tzf "$OUT" 2>/dev/null)" || die "archive is not readable"
-grep -E '(\.credentials$|\.runner$|marathon-slot@\.service|run-containerized-slot\.sh|runner-watchdog\.sh)' \
+grep -E '(\.credentials$|\.runner$|joggo-slot@\.service|run-containerized-slot\.sh|runner-watchdog\.sh)' \
     <<<"$listing" | sed 's/^/    /'
 
 # NEVER `echo "$listing" | grep -q ...` HERE. Under `set -o pipefail` that construct reports
@@ -192,7 +192,7 @@ grep -E '(\.credentials$|\.runner$|marathon-slot@\.service|run-containerized-slo
 #     3-line input, any match                -> rc=0
 # This archive lists ~30k entries and .credentials sits near the front: worst case for it.
 # A here-string has no pipeline, so there is nothing to be killed by an early exit.
-for must in '\.credentials$' '\.runner$' 'marathon-slot@\.service'; do
+for must in '\.credentials$' '\.runner$' 'joggo-slot@\.service'; do
     grep -qE "$must" <<<"$listing" || die "archive is missing $must — not a restore point"
 done
 

@@ -44,7 +44,7 @@ Fill these in before starting:
 |----------|-------|
 | `GH_ORG` | `example-org` |
 | `RUNNER_USER` | `ghrunner` (dedicated unprivileged user we create) |
-| `RUNNER_LABELS` | `self-hosted,linux,x64,marathon` |
+| `RUNNER_LABELS` | `self-hosted,linux,x64,joggo` |
 | `ADMIN_TAILNET_DEVICE` | the operator's laptop/desktop hostname in Tailscale (for ACLs) |
 
 ---
@@ -88,14 +88,14 @@ This is how you reach the PC from your work machine **without exposing anything 
 ### 3.1 Install + bring up Tailscale
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --ssh --hostname marathon --advertise-tags=tag:ci
+sudo tailscale up --ssh --hostname joggo --advertise-tags=tag:ci
 ```
 🧑 OPERATOR: a browser auth URL prints — open it, log into Tailscale, approve the device.
 `--ssh` enables **Tailscale SSH** (no separate sshd needed; access is governed by tailnet ACLs).
 `--advertise-tags=tag:ci` labels this machine so ACLs can target it.
 
 ### 3.2 Make it a stable server node
-🧑 OPERATOR: in the Tailscale admin console → Machines → `marathon` → **disable key expiry**
+🧑 OPERATOR: in the Tailscale admin console → Machines → `joggo` → **disable key expiry**
 (so it doesn't drop off the tailnet every ~6 months).
 
 ### 3.3 Lock down with ACLs — only approved devices may reach this box
@@ -160,8 +160,8 @@ sudo -iu ghrunner bash -c '
   ./config.sh \
     --url https://github.com/example-org \
     --token <REG_TOKEN> \
-    --name marathon \
-    --labels self-hosted,linux,x64,marathon \
+    --name joggo \
+    --labels self-hosted,linux,x64,joggo \
     --unattended --replace'
 ```
 
@@ -229,7 +229,7 @@ on:
     paths: ['apps/**', 'packages/**', 'docker/**', 'pnpm-lock.yaml', 'package.json']
 jobs:
   build-and-push:
-    runs-on: [self-hosted, linux, x64, marathon]
+    runs-on: [self-hosted, linux, x64, joggo]
     # ...
 ```
 > Optional resilience: if you also keep `ubuntu-latest` as a fallback label, CI still runs (on paid
@@ -244,16 +244,16 @@ jobs:
 ```bash
 sudo /home/ghrunner/actions-runner/svc.sh status   # active (running)
 sudo ufw status verbose                              # deny incoming; allow in on tailscale0
-tailscale status                                     # marathon up, tag:ci
+tailscale status                                     # joggo up, tag:ci
 docker run --rm hello-world                          # docker works for the build user context
 ```
 🧑 OPERATOR: confirm the runner shows **online/idle** in GitHub org → Runners.
 
 **From the operator's machine (we'll do this together):**
-- `tailscale ping marathon` → succeeds (you're an allowed `tag:admin` device).
-- `ssh ghrunner@marathon` over Tailscale → connects (Tailscale SSH).
-- From a **non-allowed** device → cannot see or reach `marathon` (ACL default-deny). ✅
-- Trigger a tiny test workflow (`runs-on: [self-hosted, marathon]`, `run: echo ok`) → it executes on
+- `tailscale ping joggo` → succeeds (you're an allowed `tag:admin` device).
+- `ssh ghrunner@joggo` over Tailscale → connects (Tailscale SSH).
+- From a **non-allowed** device → cannot see or reach `joggo` (ACL default-deny). ✅
+- Trigger a tiny test workflow (`runs-on: [self-hosted, joggo]`, `run: echo ok`) → it executes on
   the PC and goes green, **with zero GitHub-hosted minutes consumed**.
 
 ---
@@ -317,7 +317,7 @@ Register-ScheduledTask -TaskName 'WSL2-keepalive' -Action $action -Trigger $trig
 ```
 This runs **whether or not a user is logged on**, at startup, so WSL2 + systemd (docker, tailscale,
 the runner service) stay up with nobody logged in. Verify after a reboot: from a logged-off state,
-`tailscale ping marathon` from an admin device should still succeed.
+`tailscale ping joggo` from an admin device should still succeed.
 
 ### 11.3 Disable **Windows** sleep, not just Linux (§2.4 is insufficient here)
 The runbook's `systemctl mask sleep.target` only covers the Linux side. If **Windows** sleeps, the

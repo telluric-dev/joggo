@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build marathon/dind:local — the slot daemon with buildkit already inside.
+# Build joggo/dind:local — the slot daemon with buildkit already inside.
 #
 #   slots/dind-image/build.sh              # build with the pinned digest below
 #   slots/dind-image/build.sh --refresh    # re-resolve the tag, print the new digest, build
@@ -19,7 +19,7 @@ BUILDKIT_REF=moby/buildkit:buildx-stable-1
 BUILDKIT_DIGEST=sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
 
 DIND_BASE=${DIND_BASE:-docker:28-dind}
-IMAGE=${IMAGE:-marathon/dind:local}
+IMAGE=${IMAGE:-joggo/dind:local}
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REFRESH=0
 
@@ -70,7 +70,7 @@ rm -f "$HERE/buildkit.tar"
 echo
 echo "built: $IMAGE"
 docker image inspect "$IMAGE" \
-  --format '  buildkit: {{index .Config.Labels "org.marathon.buildkit-ref"}}@{{index .Config.Labels "org.marathon.buildkit-digest"}}'
+  --format '  buildkit: {{index .Config.Labels "org.joggo.buildkit-ref"}}@{{index .Config.Labels "org.joggo.buildkit-digest"}}'
 echo
 echo "The slot picks this up by default. To use stock dind instead:"
-echo "  DIND_IMAGE=docker:28-dind systemctl restart marathon-slot@1"
+echo "  DIND_IMAGE=docker:28-dind systemctl restart joggo-slot@1"

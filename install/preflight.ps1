@@ -815,7 +815,20 @@ if ($ghPresent) {
 if ($Token) {
   Add-Check github-auth pass 'a registration token was supplied (held in memory, never printed or persisted)'
 } elseif ($ghAuthed -eq $true) {
-  Add-Check github-auth pass 'gh CLI is authenticated -- the installer can mint a registration token through it'
+  # SAYS WHAT IS TRUE. This used to claim "the installer can mint a registration token
+  # through it", and the installer cannot: there is no minting code anywhere in this
+  # repository. Resolve-JoggoToken reads -Token, then JOGGO_TOKEN / RUNNER_TOKEN /
+  # GITHUB_RUNNER_TOKEN, and then gives up. So preflight passed the box and reported the
+  # credential question as answered, and the install then stopped dead on a missing token
+  # -- after the operator had been told that part was handled.
+  #
+  # Found by running the installer for real rather than reading it. gh being authenticated
+  # is still worth knowing, because the scope check below uses it, so the check stays and
+  # only the false half of the claim goes -- replaced by the command actually needed.
+  $mintCmd = if($Scope -eq 'org' -and $Org){ "gh api -X POST orgs/$Org/actions/runners/registration-token --jq .token" }
+             elseif($Repo){ "gh api -X POST repos/$Repo/actions/runners/registration-token --jq .token" }
+             else{ 'gh api -X POST repos/<owner>/<repo>/actions/runners/registration-token --jq .token' }
+  Add-Check github-auth pass "gh CLI is authenticated, which the scope check uses. The install needs a token of its own -- mint one with:  $mintCmd"
 } elseif ($ghAuthed -eq $false) {
   Add-Check github-auth fail 'gh CLI is installed but not authenticated, and no -Token was supplied' `
     'Either run: gh auth login  -- or mint a registration token by hand and pass it: -Token $env:JOGGO_TOKEN (org: https://github.com/organizations/<org>/settings/actions/runners/new). The token is short-lived (~1h) and must never be committed or stored.'

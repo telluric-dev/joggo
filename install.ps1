@@ -416,8 +416,55 @@ Write-JLine $ctx ("  token      : {0}" -f (& { if($regToken){'held in memory, ne
 if($ctx.DryRun){ Write-JLine $ctx '  DRY RUN    : nothing will be changed, and no wsl.exe call will be made.' }
 Write-JLine $ctx '=============================================================================='
 
+
+# ------------------------------------------------------------------- elevation
+#
+# REQUIRE ELEVATION FOR WHAT THIS RUN ACTUALLY DOES, not for what an install can
+# do in general. This gate used to fire unconditionally and blame "the Windows
+# features, the SYSTEM scheduled tasks and the keepalive" -- but under
+# -NoGuard -NoSampler -NoStartOnBoot not one of those three is being installed,
+# and every remaining step does its work as root INSIDE the distro, which is not
+# Windows admin. So an install that needed no elevation was refused anyway, with
+# a message naming three causes that were not present. A refusal that misstates
+# its own reason is worse than a refusal, because the operator fixes the wrong
+# thing: here they would open an elevated shell to satisfy a requirement that had
+# already been waived by their own flags.
+#
+# Each reason names the flag that removes it, so the message is also the way out.
+$adminReasons = New-Object System.Collections.Generic.List[string]
+if($cfg.guard -or $cfg.sampler){
+  $adminReasons.Add('registering the SYSTEM scheduled tasks for the memory guard and the 5-minute sampler   (-NoGuard -NoSampler)')
+}
+if($cfg.startOnBoot){
+  $adminReasons.Add('registering the keepalive task that starts the distro at boot   (-NoStartOnBoot)')
+}
+
+# The features step QUERIES with Get-WindowsOptionalFeature -Online, and that call
+# is itself elevated -- so when the features are already on it is the CHECK, not
+# the enabling, that wants admin. A distro that answers a command proves both
+# features are enabled, because it could not have run otherwise. That is the same
+# "prove by use rather than by query" that preflight's win-features check uses,
+# and where it holds there is nothing for step 10 to do and nothing to elevate for.
+$featuresProven = $false
+if(-not $ctx.DryRun){
+  $probe = Invoke-Wsl -Ctx $ctx -Command 'true' -Distro $cfg.distro -TimeoutSec 60
+  $featuresProven = ($null -ne $probe -and $probe.ok)
+  if(-not $featuresProven){
+    $adminReasons.Add("checking the WSL optional features, because distro '$($cfg.distro)' did not answer a command")
+  }
+}
+
 if(-not (Test-Admin) -and -not $ctx.DryRun){
-  Fail -Ctx $ctx -Problem 'not running as Administrator' -Action 'the Windows features, the SYSTEM scheduled tasks and the keepalive all need elevation. Re-run in an elevated PowerShell.' -Code 1
+  if($adminReasons.Count -gt 0){
+    $why = ($adminReasons | ForEach-Object { "           - $_" }) -join [Environment]::NewLine
+    Fail -Ctx $ctx -Problem 'not running as Administrator, and this install needs it' `
+      -Action ("re-run in an elevated PowerShell. What needs elevation here, and nothing else:" + [Environment]::NewLine + $why) -Code 1
+  }
+  Warn $ctx 'not elevated -- and nothing this run asks for needs elevation.'
+  Say  $ctx ("  '{0}' answers a command, so both WSL features are on and step 10 has nothing left to check." -f $cfg.distro)
+  Say  $ctx '  no scheduled tasks were requested, and every remaining step works as root INSIDE the distro.'
+  $steps = @($steps | Where-Object { $_ -ne '10-wsl-feature' })
+  $ctx.StepTotal = $steps.Count
 }
 
 Save-JoggoConfig -Ctx $ctx -Cfg $cfg

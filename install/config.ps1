@@ -484,7 +484,24 @@ function Invoke-Wsl {
     $tOut = $p.StandardOutput.ReadToEndAsync()
     $tErr = $p.StandardError.ReadToEndAsync()
     if($PSBoundParameters.ContainsKey('Stdin') -and $null -ne $Stdin){
-      $p.StandardInput.Write($Stdin)
+      # WRITE THE BYTES, NOT THE STRING. StandardInput is a StreamWriter whose
+      # encoding comes from the console code page -- on this box 437/1252, not
+      # UTF-8 -- so .Write($string) re-encodes every non-ASCII character on its
+      # way into the pipe. inside-wsl.sh carries em-dashes and middle dots in
+      # its comments, so each one arrived inside the distro as two or three
+      # mojibake bytes. That is what broke it: enough of them land inside quoted
+      # strings to desynchronise bash's parser, and the error surfaced 150 lines
+      # later as "line 205: syntax error near unexpected token `('" -- a line
+      # containing file(s), which is only a syntax error once the quoting around
+      # it has already been destroyed.
+      #
+      # ProcessStartInfo.StandardInputEncoding would be the tidy fix and does not
+      # exist on .NET Framework, which is what Windows PowerShell 5.1 runs on. So
+      # encode explicitly and write to the BaseStream, which takes bytes and
+      # re-encodes nothing.
+      $inBytes = [Text.Encoding]::UTF8.GetBytes($Stdin)
+      $p.StandardInput.BaseStream.Write($inBytes, 0, $inBytes.Length)
+      $p.StandardInput.BaseStream.Flush()
     }
     $p.StandardInput.Close()
     if(-not $p.WaitForExit($TimeoutSec * 1000)){
@@ -567,7 +584,19 @@ function Push-InsideWsl {
   if(-not (Test-Path $src)){
     Fail -Ctx $Ctx -Problem "install/inside-wsl.sh is missing from $($Ctx.RepoRoot)" -Action 'run install.ps1 from a complete checkout' -Code 1
   }
-  $text = (Get-Content -Path $src -Raw) -replace "`r",''
+  # READ IT AS UTF-8 EXPLICITLY. Get-Content -Raw under Windows PowerShell 5.1
+  # reads a BOM-less file as ANSI, and this file is BOM-less UTF-8 -- as a shell
+  # script must be, since a BOM is bytes before the shebang. Measured on the box
+  # this was written on: Get-Content -Raw returned 59026 characters where the
+  # file holds 58953, because each em-dash came back as three.
+  #
+  # Same root cause as the supervisor-brief renderer in 97-agent.ps1. That one
+  # was found by rendering the file and looking at it; this one could only be
+  # found by running the installer, because the corruption happened in a string
+  # that was never printed -- it went straight into a pipe.
+  #
+  # The -replace stays: a CRLF checkout would still need flattening.
+  $text = ([System.IO.File]::ReadAllText($src, [System.Text.Encoding]::UTF8)) -replace "`r",''
   $r = Invoke-Wsl -Ctx $Ctx -Command 'mkdir -p /opt/joggo && cat > /opt/joggo/inside-wsl.sh && chmod 0755 /opt/joggo/inside-wsl.sh && bash -n /opt/joggo/inside-wsl.sh && echo staged' -Stdin $text -TimeoutSec 60
   if(-not $r.ok -or $r.out -notmatch 'staged'){
     Fail -Ctx $Ctx -Problem "could not stage the Linux half into $($Ctx.Distro): $($r.err)$($r.out)" -Action "check: wsl -d $($Ctx.Distro) -u root -- echo ok" -Code 1

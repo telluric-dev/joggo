@@ -34,11 +34,18 @@ USER root
 
 # One layer, no recommends, lists cleaned — this image is rebuilt on every runner
 # release and the size is paid on every slot start.
+#
+# curl and ca-certificates are here because --no-install-recommends means neither
+# is guaranteed, and the installer's own build of this image used to add them. It
+# built from a separate inline Dockerfile that had drifted from this one; there is
+# now only this file, and it is the union of the two.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       libatomic1 \
       zstd \
       git-lfs \
+      curl \
+      ca-certificates \
  && git lfs install --system \
  && rm -rf /var/lib/apt/lists/*
 

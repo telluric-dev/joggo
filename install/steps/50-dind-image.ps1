@@ -8,14 +8,16 @@
 #                         version is that a floating moby/buildkit tag pulled
 #                         from Hub at build time took a production deploy down.
 #
-# joggo/actions-runner:local   the slot's runner container. THE REPO DOES NOT
-#                         SHIP A CONTEXT FOR THIS. run-containerized-slot.sh
-#                         defaults RUNNER_IMAGE to this name and says to build
-#                         it from tools/runner-image, a directory the scrub
-#                         removed. Without it no slot can start, so the Linux
-#                         half generates the context: the upstream image plus
-#                         the three packages the launcher's own header names as
-#                         missing from it (libatomic1, zstd, git-lfs).
+# joggo/actions-runner:local   the slot's runner container, built from
+#                         slots/runner-image/Dockerfile: the upstream image plus
+#                         libatomic1, zstd and git-lfs, which it omits and which
+#                         fail jobs quietly when absent. That file explains each.
+#
+#                         There used to be TWO of these. The Linux half generated
+#                         its own Dockerfile inline, believing the repo shipped
+#                         none, while slots/runner-image/Dockerfile sat unread --
+#                         and the two had drifted apart. Staged with the payload
+#                         and built from now; one file, the union of both.
 #
 # Neither image is in any registry, so "present locally" is the only success
 # condition — which is also why a `docker pull` failure for them is not an
@@ -25,7 +27,7 @@ Step-Header $Ctx '50-dind-image'
 
 if($Ctx.DryRun){
   Plan $Ctx 'would build joggo/dind:local via slots/dind-image/build.sh, unless the image is already present'
-  Plan $Ctx 'would generate /opt/joggo/runner-image/Dockerfile and build joggo/actions-runner:local, unless present'
+  Plan $Ctx 'would build joggo/actions-runner:local from slots/runner-image/Dockerfile, unless present'
   Plan $Ctx 'would confirm each image with docker image inspect afterwards — build.sh exiting 0 is not evidence of an image'
   Add-Result $Ctx 'images' 'pass' 'dry run' ''
   return

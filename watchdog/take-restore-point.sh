@@ -22,7 +22,7 @@
 #             workspace that nothing reads any more. Restoring it would restore the exact
 #             root-owned poisoning this architecture was built to end.
 #   _diag   — logs, not state.
-#   the runner image — rebuildable from tools/runner-image/Dockerfile, and reproducing it
+#   the runner image — rebuildable from slots/runner-image/Dockerfile, and reproducing it
 #             is a documented one-liner in the MANIFEST. A 700MB image layer in a secret
 #             tarball is a poor trade for a `docker build`.
 #
@@ -103,7 +103,7 @@ This restores the RUNNING MACHINE. Pair it with the matching git tag for the rep
        tar -xzpf joggo-restore-<stamp>.tar.gz -C /
 
   3. Rebuild the runner image — it is deliberately NOT in this tarball:
-       docker build -t joggo/actions-runner:local <repo>/tools/runner-image
+       docker build -t joggo/actions-runner:local <repo>/slots/runner-image
 
   4. Reload and start the shape you want:
        systemctl daemon-reload

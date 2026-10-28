@@ -13,7 +13,7 @@ Step-Header $Ctx '20-distro'
 $payload = @(
   'slots\run-containerized-slot.sh','slots\slot-pause.sh','slots\slots-status.sh',
   'slots\add-slot.sh','slots\systemd\joggo-slot@.service',
-  'slots\dind-image\build.sh','slots\dind-image\Dockerfile',
+  'slots\dind-image\build.sh','slots\dind-image\Dockerfile','slots\runner-image\Dockerfile',
   'watchdog\runner-watchdog.sh','watchdog\rerun-after-reboot.sh',
   'watchdog\systemd\runner-watchdog.service','watchdog\systemd\runner-watchdog.timer',
   'watchdog\systemd\actions-runner-restart-override.conf',

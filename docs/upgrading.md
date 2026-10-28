@@ -58,7 +58,7 @@ secret-bearing tarball is a poor trade for a one-line build. Since 2026-09-12 th
 **two** of them, and a slot will not start without both:
 
 ```bash
-docker build -t joggo/actions-runner:local tools/runner-image
+docker build -t joggo/actions-runner:local slots/runner-image
 slots/dind-image/build.sh          # joggo/dind:local — dind + digest-pinned buildkit
 ```
 

@@ -1,4 +1,6 @@
-# joggo
+<h1 align="center">
+  <img src="docs/assets/joggo-logo.png" alt="joggo" width="440">
+</h1>
 
 A self-hosted GitHub Actions runner built to run for weeks on a machine someone is
 also using.

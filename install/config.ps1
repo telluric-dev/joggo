@@ -186,12 +186,31 @@ function Get-JoggoDefaults {
   }
 }
 
-$script:JoggoKeys = @(
-  'scope','org','repo','runnerName','labels','slots','distro','runnerUser',
-  'guard','guardWarnMB','guardCriticalMB','guardIntervalMin','sampler',
-  'watchdog','monitor','agentSupervisor','startOnBoot','tailscale','filterAaaa','ramMB'
-)
-function Get-JoggoKeys { $script:JoggoKeys }
+# THE LIST IS A CONSTANT, SO IT IS NOW WRITTEN AS ONE.
+#
+# This was `$script:JoggoKeys`, read back by Get-JoggoKeys. Every step is invoked
+# with `& $f`, which gives the step its own script scope -- and `$script:` inside a
+# dot-sourced function resolves against the CALLING script's scope, not the scope
+# the function was defined in. So the variable was invisible from every step that
+# needed it. Measured in isolation:
+#
+#   in the installer's own scope     Get-JoggoKeys -> 20 keys
+#   inside a step invoked with &     THREW: cannot be retrieved because it has
+#                                           not been set
+#
+# Invoke-Phase is the one call every Linux-side step makes, and it reads this list
+# to build the phase payload -- so the install died on its first use of it, in
+# 20-distro, after staging had succeeded and before any step had done real work.
+#
+# Returning the literal removes the scope question instead of answering it. There
+# is no state here to share: it is a fixed list of config key names.
+function Get-JoggoKeys {
+  @(
+    'scope','org','repo','runnerName','labels','slots','distro','runnerUser',
+    'guard','guardWarnMB','guardCriticalMB','guardIntervalMin','sampler',
+    'watchdog','monitor','agentSupervisor','startOnBoot','tailscale','filterAaaa','ramMB'
+  )
+}
 
 # ---------------------------------------------------------------- the token
 #

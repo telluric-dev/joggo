@@ -290,10 +290,25 @@ phase_docker() {
       die "the docker socket in this distro comes from Docker Desktop ($sock)" \
           "turn off Docker Desktop's WSL integration for this distro (Settings -> Resources -> WSL integration), then re-run. joggo needs Docker Engine NATIVE in the distro." ;;
   esac
+  # A WINDOWS docker.exe ON PATH IS NOT DOCKER DESKTOP INTEGRATION, and on its own
+  # it is harmless. WSL's appendWindowsPath=true projects the host PATH into every
+  # distro, so whenever Docker Desktop is installed on the box -- which is common --
+  # /mnt/c/Program Files/Docker/Docker/resources/bin/docker is on PATH even in a
+  # distro with no integration enabled at all. The SOCKET check above is what
+  # detects real integration, and it is the one that has to be fatal.
+  #
+  # This used to die right here, which made the rest of the phase unreachable on
+  # exactly the machines that need it. A fresh distro has no native docker, so the
+  # only docker on PATH is the Windows one, so the installer refused to install the
+  # native engine -- the single thing that would have fixed it -- and told the
+  # operator to switch off an integration that was already off. Measured on a fresh
+  # Ubuntu-24.04 whose socket check had just passed, proving integration was off.
+  #
+  # So note it and carry on. PATH ORDER is checked at the end of this phase, once
+  # /usr/bin/docker exists and the question can actually be answered.
   if command -v docker >/dev/null 2>&1; then
     case "$(readlink -f "$(command -v docker)" 2>/dev/null || true)" in
-      /mnt/*) die "the docker CLI on PATH is Docker Desktop's Windows binary" \
-                  "disable Desktop's WSL integration for this distro and re-run" ;;
+      /mnt/*) say "docker on PATH is currently the host's ($(command -v docker)); the native engine will take precedence once installed" ;;
     esac
   fi
 
@@ -343,6 +358,20 @@ phase_docker() {
   [ -n "$sv" ] || undetermined "the Docker server version (the daemon did not answer)" \
                                "docker info ; journalctl -u docker --no-pager -n 50"
   ok "docker.service active, server $sv (asked the daemon, not the unit)"
+
+  # PATH ORDER, checked HERE and not at the top of the phase. Before the install
+  # there is legitimately no native docker to find, so the question is meaningless
+  # then; now that /usr/bin/docker exists, it is the question that matters. If the
+  # Windows binary still wins at this point, every `docker` call in the slot
+  # scripts would talk to the host daemon instead of this distro's.
+  local cli
+  cli="$(readlink -f "$(command -v docker)" 2>/dev/null || true)"
+  case "$cli" in
+    /mnt/*) die "the native engine is active but '$cli' still wins on PATH" \
+                "put /usr/bin ahead of the Windows entries, or set appendWindowsPath=false in /etc/wsl.conf and restart the distro (wsl --terminate), then re-run" ;;
+    '')     undetermined "which docker CLI is on PATH" "check inside the distro: command -v docker" ;;
+    *)      ok "docker CLI resolves to $cli, not the host's" ;;
+  esac
 
   # Disk hygiene. A full disk presents as random build failures, and this box
   # fills it with build cache rather than with anything a human put there.

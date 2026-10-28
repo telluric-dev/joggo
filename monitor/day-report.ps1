@@ -25,8 +25,8 @@ param(
   [string] $Note,
   [string] $Text,
   # Where the rendered page lands.
-  [string] $OutFile = "$env:USERPROFILE\.claude\ci-day\ci-day.html",
-  [string] $StateDir = "$env:USERPROFILE\.claude\ci-day",
+  [string] $OutFile = "$env:USERPROFILE\.claude\joggo-day\joggo-day.html",
+  [string] $StateDir = "$env:USERPROFILE\.claude\joggo-day",
   # How far back to look for failures that are still open (never superseded by a pass).
   [int] $LookbackDays = 14,
   # Repos to watch. Defaults to everything that has ever run on joggo.
@@ -140,7 +140,7 @@ $all = @($all | Where-Object Status -eq 'completed')
 # on createdAt files both under "still open from earlier" — or drops them entirely:
 #   * long runs (appone Build & Deploy is 50m-2.5h and often starts late evening);
 #   * every RE-RUN, because a re-run keeps the original run's createdAt. Since
-#     ci-rerun-after-reboot retries automatically, this is now the normal path.
+#     joggo-rerun-after-reboot retries automatically, this is now the normal path.
 # "Every job that finished today" is what the synopsis promises, so honour that.
 $runs = @($all | Where-Object { $_.End -ge $dayStart })
 

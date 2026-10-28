@@ -1,5 +1,5 @@
 ---
-name: add-ci-slot
+name: adding-a-slot
 description: >
   Use when the joggo box needs MORE CONCURRENCY — jobs queuing behind each other, or
   GitHub dropping them with "The job was not acquired by Runner of type self-hosted even
@@ -35,7 +35,7 @@ launcher change to make**:
 | containers | `joggo-runner-$SLOT`, `joggo-dind-$SLOT` |
 | volumes | `joggo-slot-${SLOT}-work`, `joggo-slot-${SLOT}-root` |
 | diag | `/var/log/joggo-slots/${SLOT}/_diag` |
-| pause / fail flags | `/var/lib/ci-slot/${SLOT}.paused`, `.fails` |
+| pause / fail flags | `/var/lib/joggo-slot/${SLOT}.paused`, `.fails` |
 
 Exactly one thing is shared: `RUNNER_ROOT="${RUNNER_ROOT:-/home/ghrunner/actions-runner}"`.
 It is already env-overridable, so a **per-instance** drop-in fixes it without touching the
@@ -49,13 +49,13 @@ under load slows the running job and lengthens the queue behind it, which is pre
 jobs get dropped here. Wait for:
 
 ```bash
-wsl -d Ubuntu -u root bash -c 'ci-pause status' | grep 'job in flight'
+wsl -d Ubuntu -u root bash -c 'joggo-pause status' | grep 'job in flight'
 # want: job in flight: none
 ```
 
 **Take a restore point first and verify it** — `watchdog/take-restore-point.sh`, then read it
 back. On 2026-09-12 both restore points on this box turned out unreadable. An unverified
-backup is a hope, not a rollback. See **upgrade-ci-runner** §1.
+backup is a hope, not a rollback. See [`docs/upgrading.md`](upgrading.md) §1.
 
 **Baseline smoke on the current slot**, so you know the test works while the proven setup
 still serves:
@@ -77,10 +77,11 @@ and writes `/etc/systemd/system/joggo-slot@2.service.d/root.conf`. It then print
 commands only a human can run.
 
 **The token step is deliberately not automated.** It expires in ~1 hour and the hardening
-rule is no privileged secrets on the CI box (**setup-ci-runner** §6):
+rule is no privileged secrets on the CI box ([`runner-setup.md`](runner-setup.md) §6):
 
-1. Mint at `https://github.com/organizations/example-org/settings/actions/runners/new`
-2. Register **as `ghrunner`, not root**:
+1. Mint at `https://github.com/organizations/example-org/settings/actions/runners/new` — or, on a
+   personal account, `https://github.com/<owner>/<repo>/settings/actions/runners/new`
+2. Register **as `ghrunner`, not root**, with the same `--url` you used for slot 1:
 
 ```bash
 sudo -u ghrunner bash -c 'cd /home/ghrunner/actions-runner-2 && ./config.sh \

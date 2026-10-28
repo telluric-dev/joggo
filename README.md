@@ -23,6 +23,10 @@ single most useful page here** even if you never run any of this.
 ## What you get
 
 ```
+install.ps1 The installer: wizard for a human, flags for an agent, `-PreflightOnly` to
+install/    check the box without touching it. WSL2 on Windows is the only target.
+              CONTRACT.md                  config keys, flags, steps, exit codes
+
 slots/      Two containerised runner slots. Each is a runner container plus its own
             Docker daemon, on its own network, with a throwaway work volume.
             run.sh --once per job, so no job ever sees another's workspace.
@@ -54,7 +58,8 @@ monitor/    deploy-monitor.ps1   WPF monitor that reconstructs deploys from the
 network/    filter-aaaa.conf     dnsmasq drop-in for hosts that advertise AAAA
                                  records they cannot route (see Known limits)
 
-tailscale/  acl.hujson           default-deny tailnet policy; admin devices, SSH only
+tailscale/  acl.hujson           default-deny tailnet policy; admin devices, SSH only.
+                                 OPTIONAL — only for managing a headless box remotely.
 
 .github/    build-and-push.yml   reusable workflow_call image build (buildx → GHCR)
             node-test.yml        reusable containerised Node test job, with a
@@ -65,48 +70,31 @@ tailscale/  acl.hujson           default-deny tailnet policy; admin devices, SSH
 
 ## Setup
 
-Three phases, in order. **Phase 2 is the GitHub side**, and it is the part people miss.
+**[`docs/quickstart.md`](docs/quickstart.md)** — shortest real path from nothing to a
+green build. **Windows 10 2004+ or 11 with WSL2 is the only supported target**: every
+Windows-side tool here (guard, sampler, monitor, day report) talks to the WSL VM from
+the host, so there is no native-Linux or VM path.
 
-### Phase 1 — the box
-
-Full runbook: **[`docs/runner-setup.md`](docs/runner-setup.md)**. In outline:
-
-1. A dedicated unprivileged user (`ghrunner`). Never run the runner as root.
-2. Docker Engine inside WSL2 — **native, not Docker Desktop**.
-3. Disable sleep, in Windows *and* in the BIOS. An asleep runner is a CI outage for
-   every repository pointed at it.
-4. Tailscale, then `tailscale/acl.hujson` — default-deny, admin devices only, SSH only.
-5. Host firewall: default-deny inbound, management over the tailnet only.
-
-### Phase 2 — register with GitHub
-
-**Where to click:**
-`https://github.com/organizations/<your-org>/settings/actions/runners/new` → Linux x64.
-Copy the **registration token** it shows you.
-
-**That token is short-lived (~1 hour) and must never be committed or stored.** Minting
-it is deliberately a human step — [`SECURITY.md`](SECURITY.md) and
-[`docs/recovery.md`](docs/recovery.md) §5 explain why automating it is left undone.
-
-```bash
-# as the runner user, inside WSL
-sudo -iu ghrunner bash -c '
-  cd ~/actions-runner &&
-  ./config.sh \
-    --url https://github.com/<your-org> \
-    --token <REG_TOKEN> \
-    --name joggo \
-    --labels self-hosted,linux,x64,joggo \
-    --unattended --replace'
+```powershell
+./install.ps1 -PreflightOnly                     # checks everything, changes nothing
+./install.ps1 -Wizard                            # a human
+./install.ps1 -NonInteractive -Json -Yes -Scope repo -Repo me/my-app -Token $env:JOGGO_TOKEN
 ```
 
-Register at the **organisation** level, not per repository — one registration serves
-every repo you allow. `--replace` matters: a ghost entry with the same name usually
-survives server-side and will block a fresh registration without it.
+`-Scope repo` is the **personal-account** path and is fully supported: runner groups are
+an organisation-only feature, so a personal account registers the runner per repository
+instead. `-Scope org -Org <org>` is the organisation path. Slots and the memory guard's
+thresholds scale with RAM — 1 slot under 12 GB, 2 for 12–32 GB, 3 above; guard warn at
+15% of RAM and critical at 7.5%, which is the measured 2500/1200 MB on a 16 GB box. The
+honest floor is 8 GB. Tailscale is **optional** and only for remote management of a
+headless box. Exit codes: `0` success, `1` failure, `2` bad usage, `3` preflight failed.
 
-**Then the runner group, which is the actual security boundary.**
-`Settings → Actions → Runner groups` — create one (these docs call it `joggo-runners`)
-and choose which repositories may reach it:
+**The registration token is short-lived (~1 hour) and must never be committed or
+stored.** Minting it is deliberately a human step — [`SECURITY.md`](SECURITY.md) and
+[`docs/recovery.md`](docs/recovery.md) §5 explain why automating it is left undone.
+
+**The runner group — or, on a personal account, the set of repositories you registered
+to — is the actual security boundary.** On an org, `Settings → Actions → Runner groups`:
 
 ```
 Allow public repositories     MUST stay unchecked
@@ -115,20 +103,15 @@ Fork PR workflows             require approval for outside collaborators
 ```
 
 **A self-hosted runner executes whatever the allowed repositories tell it to, on your
-hardware, inside your home network.** That group page is the whole threat model.
+hardware, inside your network.** That list of repositories is the whole threat model.
 
-Install it as a service so it survives reboots, then confirm **Idle / online** on the
-org Runners page:
+To understand or deviate from any step, the long-form reference is
+**[`docs/runner-setup.md`](docs/runner-setup.md)**; to add a slot by hand,
+[`docs/adding-a-slot.md`](docs/adding-a-slot.md). Neither pins a runner version: take
+the current release, and the slot launcher resolves the installed runner's
+version-stamped `bin`/`externals` symlinks at start rather than hardcoding a path.
 
-```bash
-cd /home/ghrunner/actions-runner
-sudo ./svc.sh install ghrunner && sudo ./svc.sh start && sudo ./svc.sh status
-```
-
-For the containerised two-slot setup rather than one plain runner, carry on into
-[`docs/adding-a-slot.md`](docs/adding-a-slot.md).
-
-### Phase 3 — point a repository at it
+### Then point a repository at it
 
 Full runbook: **[`docs/onboarding-a-repo.md`](docs/onboarding-a-repo.md)**. The fast
 path calls the reusable workflow, which keeps a consuming repo to a few lines:

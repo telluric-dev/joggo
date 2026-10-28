@@ -1,6 +1,6 @@
 # Reusable containerized test workflow (Node + Postgres) for the self-hosted runner.
 #
-# Companion to ../../client-project-ci-setup.md. Encapsulates "option 1" isolation
+# Companion to ../../client-project-joggo-setup.md. Encapsulates "option 1" isolation
 # once, so consumer repos get it in a few lines instead of hand-rolling a
 # container + service block per repo.
 #

@@ -84,7 +84,7 @@ mkdir -p "$DEST" || die "cannot create $DEST"
     echo
     echo "== scripts (md5) =="
     md5sum /usr/local/sbin/run-containerized-slot.sh /usr/local/sbin/runner-watchdog.sh \
-           /usr/local/sbin/ci-pause.sh 2>/dev/null
+           /usr/local/sbin/joggo-pause.sh 2>/dev/null
     echo
     echo "== images =="
     docker image inspect joggo/actions-runner:local --format '{{.RepoTags}} {{.Id}}' 2>/dev/null || echo "runner image ABSENT"

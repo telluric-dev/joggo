@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# ci-slots-status.sh — what every runner slot is doing, right now.
+# joggo-slots-status.sh — what every runner slot is doing, right now.
 #
 # WHY THIS EXISTS. The joggo board is a FAILURE LEDGER: one card per deploy
 # identity, opened by a red run and closed only by a green one. In-flight work
 # appears nowhere on it, so "is anything running?" was being answered by reading
-# a card that describes a run from hours ago. `ci-pause status` answers it for
+# a card that describes a run from hours ago. `joggo-pause status` answers it for
 # one slot; since 2026-09-29 there are two, and there will be more.
 #
 # Health here means three separate things, and they fail independently:
@@ -32,7 +32,7 @@ rows=""
 for s in $slots; do
   unit=$(systemctl is-active "joggo-slot@${s}.service" 2>/dev/null || echo unknown)
   paused=no
-  [ -f "/var/lib/ci-slot/${s}.paused" ] && paused=yes
+  [ -f "/var/lib/joggo-slot/${s}.paused" ] && paused=yes
 
   # The worker container is the job. Its absence means idle, not broken.
   runner_c=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -x "joggo-runner-${s}" || true)

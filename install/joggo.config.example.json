@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "Example joggo config. Load with: ./install.ps1 -ConfigFile install/joggo.config.example.json",
+    "Flags override anything in here. The installer writes the resolved object to",
+    "%ProgramData%\\joggo\\joggo.config.json; that file is the one the steps read.",
+    "",
+    "THERE IS NO registrationToken KEY, AND THERE MUST NOT BE. The token is read from",
+    "-Token, from $env:JOGGO_TOKEN, or from a no-echo prompt, and is held in memory only.",
+    "If this file ever contains one the installer ignores it and tells you to delete it.",
+    "",
+    "The values below are the defaults for a 16 GB box. guardWarnMB and guardCriticalMB",
+    "are 15% and 7.5% of RAM, which is where 2500/1200 came from on the machine they were",
+    "measured on; slots is 1 under 12 GB and 2 otherwise, and never more by default,",
+    "because past two the constraint here is disk throughput, not memory."
+  ],
+
+  "scope": "repo",
+  "repo": "me/my-app",
+  "org": "",
+
+  "runnerName": "joggo",
+  "labels": "self-hosted,linux,x64,joggo",
+  "slots": 2,
+
+  "distro": "Ubuntu-24.04",
+  "runnerUser": "ghrunner",
+
+  "guard": true,
+  "guardWarnMB": 2500,
+  "guardCriticalMB": 1200,
+  "guardIntervalMin": 5,
+
+  "sampler": true,
+  "watchdog": true,
+  "monitor": false,
+  "startOnBoot": true,
+  "tailscale": false,
+  "filterAaaa": false
+}

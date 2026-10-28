@@ -30,12 +30,12 @@
 #               The silence threshold is INHERITED (3900s), not re-measured: it is the
 #               same listener binary doing the same long poll, and the untested case
 #               (a >50min idle slot) errs toward acting late, not wrongly.
-#   4. pause  — NOT a self-heal layer, but it interacts with them: ci-pause.sh writes
-#               /var/lib/ci-slot/%i.paused and the launcher holds there WITHOUT a listener,
+#   4. pause  — NOT a self-heal layer, but it interacts with them: joggo-pause.sh writes
+#               /var/lib/joggo-slot/%i.paused and the launcher holds there WITHOUT a listener,
 #               so the unit stays active with no containers. Restart=always never fights it
 #               (there is no exit to restart), and runner-watchdog.sh refuses to read a hold
 #               as a wedge. `systemctl status` showing active with nothing running is the
-#               expected shape of a pause — check `ci-pause status` before assuming a fault.
+#               expected shape of a pause — check `joggo-pause status` before assuming a fault.
 [Unit]
 Description=Containerized GitHub Actions runner slot %i
 Documentation=https://github.com/example-org/joggo

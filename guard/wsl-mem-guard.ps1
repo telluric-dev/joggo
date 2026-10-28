@@ -149,7 +149,7 @@ function Get-Slots {
 }
 
 function Get-PausedSlots {
-  $r = Invoke-Wsl "ls /var/lib/ci-slot/ 2>/dev/null | grep -E '^[0-9]+\.paused' | sed 's/\.paused//'" 15
+  $r = Invoke-Wsl "ls /var/lib/joggo-slot/ 2>/dev/null | grep -E '^[0-9]+\.paused' | sed 's/\.paused//'" 15
   if(-not $r.ok){ return @() }
   @($r.out -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' })
 }
@@ -183,7 +183,7 @@ if($free -ge $WarnMB){
     Log "RECOVERED free=${free}MB vmmem=${vmmem}MB — releasing the slots this guard held: $($state.heldSlots -join ', ')"
     foreach($s in @($state.heldSlots)){
       if($DryRun){ Log "  [dry-run] would resume slot $s" ; continue }
-      $r = Invoke-Wsl "if [ -x /usr/local/sbin/ci-pause ]; then /usr/local/sbin/ci-pause resume --slot $s || true; else rm -f /var/lib/ci-slot/$s.paused; fi" 60
+      $r = Invoke-Wsl "if [ -x /usr/local/sbin/joggo-pause ]; then /usr/local/sbin/joggo-pause resume --slot $s || true; else rm -f /var/lib/joggo-slot/$s.paused; fi" 60
       Log "  resumed slot $s$(if(-not $r.ok){' (reported: ' + $r.err + ')'})"
     }
     $state.heldSince = $null; $state.heldSlots = @(); Write-State $state
@@ -221,7 +221,7 @@ if(-not $DryRun){
     Log "  RECOVERED by dropping cache alone — nothing paused, nothing restarted."
     if($state.heldSince){
       foreach($s in @($state.heldSlots)){
-        $rr = Invoke-Wsl "if [ -x /usr/local/sbin/ci-pause ]; then /usr/local/sbin/ci-pause resume --slot $s || true; else rm -f /var/lib/ci-slot/$s.paused; fi" 60
+        $rr = Invoke-Wsl "if [ -x /usr/local/sbin/joggo-pause ]; then /usr/local/sbin/joggo-pause resume --slot $s || true; else rm -f /var/lib/joggo-slot/$s.paused; fi" 60
         Log "  resumed slot $s"
       }
       $state.heldSince = $null; $state.heldSlots = @(); Write-State $state
@@ -244,7 +244,7 @@ if(-not $state.heldSince){
   if($mine.Count -gt 0){
     foreach($s in $mine){
       if($DryRun){ Log "  [dry-run] would hold slot $s"; continue }
-      $r = Invoke-Wsl "if [ -x /usr/local/sbin/ci-pause ]; then /usr/local/sbin/ci-pause pause --slot $s 'held by wsl-mem-guard: low memory' || true; else mkdir -p /var/lib/ci-slot && date -u '+%Y-%m-%dT%H:%M:%SZ  held by wsl-mem-guard' > /var/lib/ci-slot/$s.paused; fi" 90
+      $r = Invoke-Wsl "if [ -x /usr/local/sbin/joggo-pause ]; then /usr/local/sbin/joggo-pause pause --slot $s 'held by wsl-mem-guard: low memory' || true; else mkdir -p /var/lib/joggo-slot && date -u '+%Y-%m-%dT%H:%M:%SZ  held by wsl-mem-guard' > /var/lib/joggo-slot/$s.paused; fi" 90
       Log "  held slot $s$(if(-not $r.ok){' (reported: ' + $r.err + ')'})"
     }
   } else {
@@ -295,7 +295,7 @@ try {
   # Release the holds this guard placed. The slot units are already up; the flag is the
   # only thing still telling them not to take work.
   foreach($s in @($state.heldSlots)){
-    $rr = Invoke-Wsl "if [ -x /usr/local/sbin/ci-pause ]; then /usr/local/sbin/ci-pause resume --slot $s || true; else rm -f /var/lib/ci-slot/$s.paused; fi" 60
+    $rr = Invoke-Wsl "if [ -x /usr/local/sbin/joggo-pause ]; then /usr/local/sbin/joggo-pause resume --slot $s || true; else rm -f /var/lib/joggo-slot/$s.paused; fi" 60
     Log "  resumed slot $s$(if(-not $rr.ok){' (reported: ' + $rr.err + ')'})"
   }
 

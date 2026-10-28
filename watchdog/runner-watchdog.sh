@@ -50,7 +50,7 @@
 # work, because guard 2 refuses to act under a job.
 #
 # GUARDS (all must pass before a restart):
-#   0. not paused          — ci-pause.sh holds on purpose; that is not a wedge.
+#   0. not paused          — joggo-pause.sh holds on purpose; that is not a wedge.
 #   1. unit is 'active'    — never fight an operator who deliberately stopped it,
 #                            and never race Restart=always on a crash.
 #   2. no Runner.Worker    — never kill an in-flight job.
@@ -95,7 +95,7 @@ HOST_SERVICE="actions.runner.example-org.joggo.service"
 # find it 'inactive', and cheerfully report the box healthy.
 #
 # SERVICE/DIAG stay overridable so --check can be pointed anywhere, and so the fault
-# injection in the upgrade-ci-runner skill can drive a specific target.
+# injection in the upgrading guide (docs/upgrading.md) can drive a specific target.
 if [ -z "${SERVICE:-}" ]; then
     if systemctl is-enabled --quiet "$SLOT_SERVICE" 2>/dev/null \
        || systemctl is-active --quiet "$SLOT_SERVICE" 2>/dev/null; then
@@ -143,12 +143,12 @@ DRY=0
 log() { echo "[runner-watchdog] $*"; [ "$DRY" -eq 1 ] || logger -t runner-watchdog -- "$*" 2>/dev/null || true; }
 
 # --- guard 0: a deliberate hold is not a wedge ------------------------------
-# ci-pause.sh holds INSIDE the launcher, which from here looks exactly like the failure
+# joggo-pause.sh holds INSIDE the launcher, which from here looks exactly like the failure
 # this watchdog exists to fix: unit active, no worker, _diag going stale for hours (a
 # 17370s hold was recorded on 2026-09-06). Restarting a paused slot would drop it straight
 # back into the same hold, having destroyed nothing but time — and would then be rate
 # limited out of acting on a REAL wedge for the next 30 minutes. Refuse up front.
-PAUSE_FLAG="${PAUSE_FLAG:-/var/lib/ci-slot/${SLOT}.paused}"
+PAUSE_FLAG="${PAUSE_FLAG:-/var/lib/joggo-slot/${SLOT}.paused}"
 if [ -e "$PAUSE_FLAG" ]; then
     log "paused by $PAUSE_FLAG ($(head -1 "$PAUSE_FLAG" 2>/dev/null)) — deliberate hold, not a wedge. Nothing to do."
     exit 0

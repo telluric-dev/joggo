@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# add-ci-slot.sh — prepare a second (or third) containerized runner slot.
+# add-joggo-slot.sh — prepare a second (or third) containerized runner slot.
 #
 # WHY THIS EXISTS. `joggo-slot@.service` is a template and nearly everything in
 # run-containerized-slot.sh is already keyed on the slot number — the network,
@@ -22,7 +22,7 @@
 #   - prints the exact config.sh line to run next
 #
 #   - it does NOT register the runner. That needs an org registration token which
-#     expires in ~1 hour and must never be stored on this box (setup-ci-runner §6),
+#     expires in ~1 hour and must never be stored on this box (docs/runner-setup.md §6),
 #     so a human mints it and runs one command. See the printed instructions.
 #   - it does NOT start the slot. You start it after registering, so the first
 #     acquisition is something you watch rather than something you discover.
@@ -44,13 +44,13 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --force) FORCE=1; shift ;;
     --undo)  UNDO=1;  shift ;;
-    *) echo "add-ci-slot: unknown argument: $1" >&2; exit 2 ;;
+    *) echo "add-joggo-slot: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 case "$SLOT" in
-  ''|*[!0-9]*) echo "usage: add-ci-slot.sh <slot-number> [--force|--undo]" >&2; exit 2 ;;
-  1) echo "add-ci-slot: slot 1 is the existing runner root; this script is for ADDITIONAL slots" >&2; exit 2 ;;
+  ''|*[!0-9]*) echo "usage: add-joggo-slot.sh <slot-number> [--force|--undo]" >&2; exit 2 ;;
+  1) echo "add-joggo-slot: slot 1 is the existing runner root; this script is for ADDITIONAL slots" >&2; exit 2 ;;
 esac
 
 SRC="/home/ghrunner/actions-runner"
@@ -59,8 +59,8 @@ DROPIN_DIR="/etc/systemd/system/joggo-slot@${SLOT}.service.d"
 DROPIN="$DROPIN_DIR/root.conf"
 RUNNER_USER="${RUNNER_USER:-ghrunner}"
 
-die()  { echo "add-ci-slot: $*" >&2; exit "${2:-2}"; }
-say()  { echo "[add-ci-slot] $*"; }
+die()  { echo "add-joggo-slot: $*" >&2; exit "${2:-2}"; }
+say()  { echo "[add-joggo-slot] $*"; }
 
 [ "$(id -u)" = "0" ] || die "run as root (sudo)" 2
 
@@ -88,7 +88,7 @@ fi
 # job and, worse, lengthens the queue for anything waiting behind it — which is
 # how jobs get dropped here.
 if [ "$FORCE" != "1" ] && ps -eo cmd | grep -qa '[R]unner.Worker'; then
-  die "a job is in flight — wait for 'ci-pause status' to read 'job in flight: none', or pass --force" 3
+  die "a job is in flight — wait for 'joggo-pause status' to read 'job in flight: none', or pass --force" 3
 fi
 
 [ -d "$SRC" ] || die "source runner root $SRC does not exist" 2

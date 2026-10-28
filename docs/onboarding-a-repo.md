@@ -1,10 +1,10 @@
 # Client-Side CI Runbook — Use the Self-Hosted Runner From a Project Repo
 
-**Audience:** a developer (or an AI agent) on **any computer**, working in **any of the org's repos**,
-who wants that repo's CI to build Docker images on the shared self-hosted runner (`joggo`) instead
-of paid GitHub-hosted minutes. The runner itself is already set up — see the server-side runbook
-[self-hosted-joggo-runner-setup.md](self-hosted-joggo-runner-setup.md). This document is the **consumer**
-side: what you add **inside a project repo**.
+**Audience:** a developer (or an AI agent) on **any computer**, working in a repo that should build
+its Docker images on the self-hosted runner (`joggo`) instead of paid GitHub-hosted minutes. The
+runner itself is already set up — see [`quickstart.md`](quickstart.md) for the install and
+[`runner-setup.md`](runner-setup.md) for the long form. This document is the **consumer** side:
+what you add **inside a project repo**.
 
 **Goal:** push to a repo → a build runs on `joggo` → an x86-64 image lands in GHCR → production
 pulls it. **No secrets, no PAT, no runner software** live in the project repo — only a workflow file.
@@ -25,26 +25,34 @@ your repo  ──push──►  GitHub Actions  ──dispatches job──►  j
 ```
 
 - The project repo contributes **one workflow file**. That's the entire client footprint.
-- The runner is **org-level**, so any approved repo can use it — you do **not** install anything.
+- On an organisation the runner is **org-level**, so any approved repo can use it — you install
+  nothing. On a **personal account** there are no runner groups, so the runner is registered to
+  each repository individually (`-Scope repo`); the client-side workflow below is identical either
+  way.
 - Auth to push the image uses the **per-job `GITHUB_TOKEN`** (minted fresh, expires when the job
   ends). The repo stores **no** long-lived registry credential.
 - The reusable build logic lives once in this repo:
-  [.github/workflows/build-and-push.yml](.github/workflows/build-and-push.yml). Project repos
+  [.github/workflows/build-and-push.yml](../.github/workflows/build-and-push.yml). Project repos
   **call** it; they don't copy it.
 
 ---
 
-## 1. Prerequisites (one-time, per repo — needs an org owner)
+## 1. Prerequisites (one-time, per repo — needs whoever owns the runner)
 
-Before a repo's jobs will run on `joggo`, an org owner must allow it. This is the security gate
-from the server runbook (§6.1) — self-hosted runners must never be exposed to public/fork code.
+Before a repo's jobs will run on `joggo`, someone must allow that repo. This is the security gate
+from [`runner-setup.md`](runner-setup.md) §6.1 — self-hosted runners must never be exposed to public or fork code.
 
-🧑 OWNER: **no onboarding action needed** — `joggo-runners` is set to **All repositories**
-(verified 2026-09-05), so every org repo can already reach the runner. Two things on that
-page (**Settings → Actions → Runner groups → `joggo-runners`**) are still worth confirming:
-- **"Allow public repositories"** stays **unchecked** — the org has 4 public repos, and
-  nothing else now stands between them and the runner.
-- The repo being onboarded is **private**.
+🧑 **Organisation owner:** **Settings → Actions → Runner groups → `joggo-runners`** — add the repo
+to the group's repository access, and confirm **"Allow public repositories"** stays **unchecked**.
+If the group is set to *All repositories*, nothing stands between any public repo in the org and
+the runner; prefer selected repositories.
+
+🧑 **Personal account:** there are no runner groups. Register the runner to this repository
+(`install.ps1 -Scope repo -Repo <owner>/<name>`, or `config.sh --url
+https://github.com/<owner>/<name>`), which is the same decision in a different place — that
+registered list *is* the boundary.
+
+Either way, the repo being onboarded must be **private**.
 
 Hard rules:
 - ✅ The repo must be **private**. Never route a public repo onto `joggo`.
@@ -206,14 +214,15 @@ GHCR packages are **private by default**, so production must authenticate to pul
   access applies, **or** grant the production box a **read-only** `read:packages` token / a GitHub
   App installation token. (Least privilege: production gets **pull-only**, never push.)
 - Keep the package **private** unless there's a reason otherwise.
-- Production's existing pull-loop + health-gate + auto-rollback (server runbook §10) handles the rest.
+- Production's existing pull-loop + health-gate + auto-rollback ([`runner-setup.md`](runner-setup.md) §10) handles the rest.
 
 ---
 
 ## 6. Onboard a new repo — checklist
 
 - [ ] Repo is **private**.
-- [ ] Owner added it to the **`joggo-runners`** runner group (§1).
+- [ ] Repo allowed on the runner: added to the **`joggo-runners`** group, or (personal account) the
+      runner registered to this repo (§1).
 - [ ] Added `.github/workflows/ci.yml` calling the reusable workflow (§2).
 - [ ] Job has `permissions: { contents: read, packages: write }`.
 - [ ] A `Dockerfile` exists at the path you referenced.
@@ -236,11 +245,11 @@ GHCR packages are **private by default**, so production must authenticate to pul
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Job stuck **Queued** forever | Runner offline (PC asleep/off/WSL down), or repo not in `joggo-runners`. Check org → Runners shows `joggo` **Idle/green**; confirm runner-group membership (§1). |
+| Job stuck **Queued** forever | Runner offline (PC asleep/off/WSL down), or the repo is not allowed on the runner. Check org → Runners shows `joggo` **Idle/green**; confirm group membership, or the per-repo registration on a personal account (§1). |
 | `denied: permission_granted... packages` on push | Missing `permissions: packages: write` in the job, or pushing to a different org/owner than `github.repository`. |
-| `permission denied ... /var/run/docker.sock` | Runner user not in `docker` group on the host — a server-side fix (server runbook §2.3), not a repo change. |
+| `permission denied ... /var/run/docker.sock` | Runner user not in `docker` group on the host — a server-side fix ([`runner-setup.md`](runner-setup.md) §2.3), not a repo change. |
 | Image is `arm64` / won't run in prod | `platforms` not `linux/amd64`. The reusable workflow defaults correctly; check any inline override. |
-| Build fails: **no space left on device** | Host disk full. Server-side weekly `docker system prune` handles this (server runbook §6.3); prune sooner if needed. |
+| Build fails: **no space left on device** | Host disk full. Server-side weekly `docker system prune` handles this ([`runner-setup.md`](runner-setup.md) §6.3); prune sooner if needed. |
 | Public repo / fork PR tried to run | Blocked by design. Never add public repos to the runner group (§1). |
 
 ---
@@ -251,7 +260,7 @@ GHCR packages are **private by default**, so production must authenticate to pul
   (`contents: read`, `packages: write`, nothing more).
 - ✅ Pin the reusable workflow to a tag/SHA for production repos.
 - ❌ Never store AWS/SSH/production secrets in a build that runs on `joggo` — the box is
-  deliberately credential-free (server runbook §6.2). If a deploy step needs prod secrets, run that
+  deliberately credential-free ([`runner-setup.md`](runner-setup.md) §6.2). If a deploy step needs prod secrets, run that
   step on a **separate, GitHub-hosted** job, not on the self-hosted runner.
 - ❌ Never `runs-on: ubuntu-latest`-style a job that depends on `joggo`-local state; treat the
   runner as shared and (eventually) ephemeral.

@@ -1,5 +1,5 @@
 ---
-name: upgrade-ci-runner
+name: upgrading
 description: >-
   Use before and during any risky change to the live joggo runner — cutting over to the
   containerized slot, upgrading the runner version, editing the self-heal layers, or changing WSL
@@ -233,7 +233,7 @@ echo "$(basename $L) age=$(( $(date +%s) - $(stat -c %Y $L) ))s"; tail -3 "$L"  
 
 **An idle slot looks exactly like a wedged one, and so does a paused one.** Between jobs there is
 no container and no listener at all; `docker ps` shows nothing and `systemctl status` shows
-`active`. Check `ci-pause status` and the newest log's age before concluding anything is wrong —
+`active`. Check `joggo-pause status` and the newest log's age before concluding anything is wrong —
 guard 0 in the watchdog exists precisely because a 17370 s hold was recorded on 2026-09-06 and is
 indistinguishable from a hang by any other signal.
 

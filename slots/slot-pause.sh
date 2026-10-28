@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# ci-pause.sh — put the containerized runner slot on HOLD and get the RAM back,
+# joggo-pause.sh — put the containerized runner slot on HOLD and get the RAM back,
 #               without unregistering it and without losing a single queued run.
 #
 # WHY THIS EXISTS
@@ -18,9 +18,9 @@
 # a hold costs one bash and one sleep — roughly 4MB. While paused there is no runner
 # container, no dind, no _work volume and no job.
 #
-#   $ ci-pause pause
-#   $ ci-pause status
-#   $ ci-pause resume
+#   $ joggo-pause pause
+#   $ joggo-pause status
+#   $ joggo-pause resume
 #
 # "LEAVE THE LISTENER LIVE TO COLLECT QUEUED JOBS" — WHAT REALLY HAPPENS
 # ----------------------------------------------------------------------
@@ -73,10 +73,10 @@
 # only one of them. See its comment for why nagging about state two would be wrong.
 #
 # INSTALL
-#   install -m 0755 slots/slot-pause.sh /usr/local/sbin/ci-pause
+#   install -m 0755 slots/slot-pause.sh /usr/local/sbin/joggo-pause
 #
 # The flag path is the actual contract between this script, the launcher and the
-# monitor. Anything that can create/remove /var/lib/ci-slot/<slot>.paused can pause the
+# monitor. Anything that can create/remove /var/lib/joggo-slot/<slot>.paused can pause the
 # runner; this script is the ergonomic front end (drain, reclaim, reporting), not a
 # gatekeeper.
 set -uo pipefail
@@ -95,20 +95,20 @@ while [ $# -gt 0 ]; do
         *)                   REASON="${REASON:+$REASON }$1"; shift ;;
     esac
 done
-[ -n "$ACTION" ] || { echo "usage: ci-pause <pause|resume|status> [--now] [--slot N] [reason]" >&2; exit 2; }
+[ -n "$ACTION" ] || { echo "usage: joggo-pause <pause|resume|status> [--now] [--slot N] [reason]" >&2; exit 2; }
 
-PAUSE_FLAG="${PAUSE_FLAG:-/var/lib/ci-slot/${SLOT}.paused}"
+PAUSE_FLAG="${PAUSE_FLAG:-/var/lib/joggo-slot/${SLOT}.paused}"
 UNIT="joggo-slot@${SLOT}.service"
 LEGACY_UNIT="actions.runner.example-org.joggo.service"
 RUNNER_C="joggo-runner-${SLOT}"
 DIND_C="joggo-dind-${SLOT}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-30}"
 
-say()  { echo "[ci-pause] $*"; }
-warn() { echo "[ci-pause] $*" >&2; }
+say()  { echo "[joggo-pause] $*"; }
+warn() { echo "[joggo-pause] $*" >&2; }
 
 need_root() {
-    [ "$(id -u)" = "0" ] || { warn "must run as root (the flag lives under /var/lib). Try: sudo ci-pause $ACTION"; exit 1; }
+    [ "$(id -u)" = "0" ] || { warn "must run as root (the flag lives under /var/lib). Try: sudo joggo-pause $ACTION"; exit 1; }
 }
 
 # The Runner.Worker process exists only while a job is executing, so this is an exact
@@ -184,7 +184,7 @@ reclaim() {
 }
 
 mem_report() {
-    free -m 2>/dev/null | awk '/^Mem:/{printf "[ci-pause] WSL VM memory: %sMB used of %sMB, %sMB available\n",$3,$2,$7}'
+    free -m 2>/dev/null | awk '/^Mem:/{printf "[joggo-pause] WSL VM memory: %sMB used of %sMB, %sMB available\n",$3,$2,$7}'
 }
 
 case "$ACTION" in

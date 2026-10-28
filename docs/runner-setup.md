@@ -1,12 +1,19 @@
-# Self-Hosted CI Runner — Home PC Setup Runbook
+# Self-Hosted CI Runner — WSL2 Setup Runbook (long form)
 
-**Audience:** an AI agent (Claude) running **on the home PC** that will become the CI/CD build
-machine, plus the human operator. Execute top to bottom. Stop and ask the operator at every
-**🧑 OPERATOR** marker (these need a human: secrets, a browser login, or a physical decision).
+**If you only want it working, use [`quickstart.md`](quickstart.md) and `install.ps1`.** This page
+is the reference: what each step does, why it is there, and what it costs. Read it when the
+installer fails a check you do not understand, or when you want to deviate from it.
 
-**Goal:** turn an always-on home PC into a free, org-wide GitHub Actions self-hosted runner that
-builds Docker images for all of the org's projects and pushes them to the container registry —
-with **no public inbound exposure**, reachable for management **only from specific computers**.
+**Target:** **Windows 10 2004+ or Windows 11, x86-64, with Ubuntu in WSL2.** That is the only
+supported configuration. There is no native-Ubuntu and no Hyper-V/VirtualBox path: every
+Windows-side tool in this repo (the memory guard, the sampler, the monitor, the day report, the
+keepalive task) talks to the WSL VM from the Windows host, so a Linux-only install leaves half the
+repo unusable.
+
+**Audience:** the human operator, or an agent working on the box with them. Execute top to bottom.
+Stop at every **🧑 OPERATOR** marker — those need a human: a secret, a browser login, or a physical
+decision. Run the `bash` blocks **inside the distro** and the `powershell` blocks **on the Windows
+host**, elevated where it says so.
 
 ---
 
@@ -14,92 +21,209 @@ with **no public inbound exposure**, reachable for management **only from specif
 
 - **The runner is outbound-only.** It polls `api.github.com` over HTTPS and pulls jobs. It needs
   **no open ports, no port-forwarding, no public IP.** Do **not** expose it to the internet.
-- **The runner is part of the production supply chain.** Whatever image it pushes to the registry
-  gets auto-deployed by the production box's pull loop. So a compromise of this PC ≈ a path to
-  production. That's why the hardening below (private-repos-only, network isolation, firewall,
-  least-privilege) is **mandatory, not optional**, for a healthcare/PHI app.
-- **Management access uses Tailscale, not port-forwarding.** The PC joins a private mesh VPN; only
-  ACL-approved devices can reach it. No SSH is ever exposed to the public internet.
-- **Least privilege:** the runner does **not** store production, AWS, or SSH credentials. It only
-  needs to push images, and that's done with the workflow's built-in `GITHUB_TOKEN`
-  (`permissions: packages: write`) — no long-lived registry PAT on this box.
+- **The runner executes other people's code on your hardware, inside your network.** Whatever it
+  builds and pushes to the registry is downstream of everything the allowed repositories can say,
+  so a compromise of this PC is a path into anything that pulls those images. That is why the
+  hardening below — private repos only, no stored credentials, default-deny firewall — is part of
+  the install and not an optional extra.
+- **The runner group is the security boundary.** On an organisation that is
+  `Settings → Actions → Runner groups`. On a **personal account** there are no runner groups, so
+  the boundary is the set of repositories you register the runner to, one at a time. Either way it
+  is a list of repositories you chose deliberately, and it is the whole threat model.
+- **Least privilege:** the runner stores no production, cloud, or SSH credentials. It needs to push
+  images, and that is done with the workflow's own `GITHUB_TOKEN` (`permissions: packages: write`)
+  — no long-lived registry PAT on this box.
+- **Management access, if you need it at all, is Tailscale — never port-forwarding.** See §3, which
+  is optional.
 
 ---
 
-## 1. Assumptions & prerequisites
+## 1. Prerequisites
 
-- **OS:** Ubuntu 22.04 or 24.04 LTS, **x86-64** (must match production's x86 images).
-  - 🧑 OPERATOR: If the PC runs **Windows**, do one of: (a) dedicate it with a clean Ubuntu install
-    (best for a build box), or (b) run Ubuntu in an always-on **Hyper-V/VirtualBox VM** or **WSL2**.
-    A native or VM Ubuntu is cleaner than WSL2 for an unattended service. Confirm which before continuing.
-- **Hardware:** ≥4 GB RAM (Docker image builds are memory-hungry), ≥40 GB free disk, wired
-  ethernet preferred (stable, and the box should never sleep).
-- **Power/uptime:** the PC must stay on. Disable sleep/hibernate (Step 2.4). A small UPS is ideal.
-- **Accounts the operator must have:** GitHub org owner access (`example-org`), a Tailscale account
-  (free tier is fine), `sudo` on this PC.
+### 1.1 Host
+
+- **Windows 10 2004+ or Windows 11**, x86-64. The images this box builds are `linux/amd64`.
+- **WSL2** (not WSL1), with an Ubuntu 22.04 or 24.04 distro, and **`systemd=true`** in that distro
+  (§2.1). systemd is not negotiable: `svc.sh`, docker, the slot units and the watchdog timer all
+  depend on it.
+- **Virtualization enabled in firmware.** Discovering this halfway through an install is the most
+  annoying way to fail; `install.ps1 -PreflightOnly` checks it before changing anything.
+- **No Docker Desktop.** This repo uses Docker Engine native inside the distro. Docker Desktop
+  providing the socket in the distro fights it; stop and disable it.
+- **≥40 GB free on the system drive**, and ≥20 GB free inside the distro.
+- **Wired ethernet preferred**, and the box must never sleep — Windows side *and* Linux side
+  (§2.1, §2.4). An asleep runner is a CI outage for every repository pointed at it. A small UPS is
+  ideal.
+
+### 1.2 Memory, and what it buys you
+
+**Floor: 8 GB. Under 12 GB, expect to feel it** — Docker image builds are memory-hungry, and this
+box's worst measured moment was 445 MB available. The installer does not fight your hardware; it
+scales to it:
+
+| RAM | Slots | Guard warn | Guard critical |
+|---|---|---|---|
+| under 12 GB | 1 | 15% of RAM | 7.5% of RAM |
+| 12–32 GB | 2 | 15% of RAM | 7.5% of RAM |
+| above 32 GB | 3 | 15% of RAM | 7.5% of RAM |
+
+The guard's published thresholds — **warn 2500 MB, critical 1200 MB** — are those same 15% and
+7.5% figures on the 16 GB box they were measured on. They are percentages of *your* RAM, not
+constants. Do not move them to make a symptom go away;
+[`memory-pressure.md`](memory-pressure.md) is what they cost to find.
+
+### 1.3 Accounts and access
+
+- A GitHub **organisation owner** (for `-Scope org`) **or** admin on a single repository (for
+  `-Scope repo`, the personal-account path). Runner groups are an organisation feature; a personal
+  account registers the runner per repository instead.
+- Local **administrator** on the Windows box, and `sudo` inside the distro.
+- **Tailscale is optional.** It is only for reaching a headless box from somewhere else. If the
+  machine is on your desk, skip §3 entirely — you do not need a Tailscale account, and nothing
+  else in this repo requires one.
 
 Fill these in before starting:
 
 | Variable | Value |
 |----------|-------|
-| `GH_ORG` | `example-org` |
+| `GH_SCOPE` | `org` or `repo` |
+| `GH_TARGET` | `example-org`, or `owner/name` for a single repo |
+| `WSL_DISTRO` | `Ubuntu-24.04` |
 | `RUNNER_USER` | `ghrunner` (dedicated unprivileged user we create) |
 | `RUNNER_LABELS` | `self-hosted,linux,x64,joggo` |
-| `ADMIN_TAILNET_DEVICE` | the operator's laptop/desktop hostname in Tailscale (for ACLs) |
+| `ADMIN_TAILNET_DEVICE` | only if you are doing §3 |
 
 ---
 
-## 2. OS preparation
+## 2. Preparing the box
 
-### 2.1 Update + base tools
+### 2.1 Windows host — WSL2, systemd, and staying awake
+
+These are the WSL2-specific concerns, and skipping any one of them makes the runner stop silently
+rather than loudly.
+
+**Install WSL2 and the distro** (elevated PowerShell; a reboot may be needed after the optional
+features go on):
+
+```powershell
+wsl --install --no-distribution       # enables the WSL + VM Platform features
+wsl --install -d Ubuntu-24.04
+wsl --set-default-version 2
+wsl -l -v                             # confirm VERSION is 2, not 1
+```
+
+**Enable systemd**, inside the distro — nothing else in this runbook works without it:
+
+```bash
+sudo tee /etc/wsl.conf >/dev/null <<'EOF'
+[boot]
+systemd=true
+EOF
+```
+
+Then, from Windows, `wsl --shutdown` to apply it. Reopen the distro and confirm
+`systemctl is-system-running` returns `running` (or `degraded`).
+
+**Keep the distro alive across logout and idle.** This is the one people miss. WSL2 shuts the VM
+down shortly after its last process exits, or when you log off — which kills the runner even with
+systemd configured. **systemd alone does not keep the VM up.** A Windows scheduled task holds it
+open:
+
+🧑 OPERATOR, elevated PowerShell (adjust `-d` to your distro name):
+
+```powershell
+$action  = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument '-d Ubuntu-24.04 --exec sleep infinity'
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+$settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName 'WSL2-keepalive' -Action $action -Trigger $trigger -Principal $principal -Settings $settings
+```
+
+It runs whether or not a user is logged on, from startup, so WSL2 and everything systemd starts
+under it stay up with nobody at the keyboard. Verify from a logged-off state after a reboot: the
+runner should still show online in GitHub.
+
+**Disable Windows sleep — a different thing from disabling Linux sleep.** Masking `sleep.target`
+in the distro (§2.4) does nothing if *Windows* sleeps: the VM suspends and CI stops regardless.
+
+🧑 OPERATOR (Windows host): **Settings → System → Power → Sleep = Never**, on battery and plugged
+in. On a laptop also **Control Panel → Power Options → Choose what closing the lid does → "Do
+nothing."** Disable sleep in the BIOS/UEFI while you are there.
+
+### 2.2 Base tools and a dedicated runner user
+
+Inside the distro:
+
 ```bash
 sudo apt-get update && sudo apt-get upgrade -y
 sudo apt-get install -y curl jq git ca-certificates ufw unattended-upgrades
 sudo systemctl enable --now unattended-upgrades   # auto security patches
+
+sudo useradd -m -s /bin/bash ghrunner            # never run the runner as root
+sudo usermod -aG sudo ghrunner                   # setup only; removed at §6.4
 ```
 
-### 2.2 Dedicated unprivileged runner user (never run the runner as root)
-```bash
-sudo useradd -m -s /bin/bash ghrunner
-sudo usermod -aG sudo ghrunner   # only for setup; we remove this at Step 6.4
-```
+### 2.3 Docker Engine (native, not Docker Desktop)
 
-### 2.3 Install Docker Engine (native, not Docker Desktop)
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker ghrunner          # lets the runner build images without sudo
 sudo systemctl enable --now docker
 ```
-> ⚠️ Being in the `docker` group is **root-equivalent** on this host. That is acceptable **only**
-> because this box is dedicated to CI, network-isolated, and runs trusted (private-repo) code.
 
-### 2.4 Never sleep (an asleep runner = CI outage for every project)
+> ⚠️ Being in the `docker` group is **root-equivalent** on this host. That is acceptable **only**
+> because the box runs trusted (private-repo) code, is network-isolated, and stores no credentials.
+
+### 2.4 Never sleep, Linux side
+
 ```bash
 sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 ```
-🧑 OPERATOR: also disable sleep in the BIOS/UEFI and the desktop power settings if present.
+
+This covers the Linux half only. The Windows half is in §2.1 and matters more.
 
 ---
 
-## 3. Remote management via Tailscale (the "only specific computers" requirement)
+## 3. Remote management via Tailscale — OPTIONAL
 
-This is how you reach the PC from your work machine **without exposing anything publicly**.
+**Skip this section if the box is on your desk.** Nothing in this repo requires Tailscale or a
+Tailscale account. It exists for one case: a headless box you need to reach from another machine
+without exposing anything publicly.
 
-### 3.1 Install + bring up Tailscale
+### 3.1 Install and bring it up
+
+Recent WSL2 ships `/dev/net/tun`, so Tailscale runs **inside the distro** under systemd. Check
+first:
+
+```bash
+test -e /dev/net/tun && echo "TUN available — run Tailscale inside the distro" \
+  || echo "No TUN — install Tailscale for Windows on the host instead, and manage the distro via wsl"
+```
+
+With TUN:
+
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up --ssh --hostname joggo --advertise-tags=tag:ci
 ```
-🧑 OPERATOR: a browser auth URL prints — open it, log into Tailscale, approve the device.
-`--ssh` enables **Tailscale SSH** (no separate sshd needed; access is governed by tailnet ACLs).
-`--advertise-tags=tag:ci` labels this machine so ACLs can target it.
+
+🧑 OPERATOR: a browser auth URL prints — open it, log in, approve the device. `--ssh` enables
+Tailscale SSH (no separate sshd; access is governed by tailnet ACLs). `--advertise-tags=tag:ci`
+labels the machine so ACLs can target it.
+
+Without TUN: install **Tailscale for Windows** on the host, advertise `tag:ci` from there, and
+manage the runner with `wsl -d Ubuntu-24.04 ...` over a host-level session.
 
 ### 3.2 Make it a stable server node
-🧑 OPERATOR: in the Tailscale admin console → Machines → `joggo` → **disable key expiry**
-(so it doesn't drop off the tailnet every ~6 months).
 
-### 3.3 Lock down with ACLs — only approved devices may reach this box
-🧑 OPERATOR: in the Tailscale admin console → **Access Controls**, set (adapt emails/tags):
+🧑 OPERATOR: Tailscale admin console → Machines → `joggo` → **disable key expiry**, so it does not
+drop off the tailnet every few months.
+
+### 3.3 Lock it down with ACLs
+
+🧑 OPERATOR: admin console → **Access Controls**. [`tailscale/acl.hujson`](../tailscale/acl.hujson)
+in this repo is the default-deny policy; adapt the emails and tags:
+
 ```json
 {
   "tagOwners": { "tag:ci": ["autogroup:owner"], "tag:admin": ["autogroup:owner"] },
@@ -113,48 +237,75 @@ sudo tailscale up --ssh --hostname joggo --advertise-tags=tag:ci
   ]
 }
 ```
-Then tag the operator's work machine `tag:admin` (Machines → that device → Edit ACL tags).
-Result: **only `tag:admin` devices can even see/SSH the runner** — exactly "specific computers only."
+
+Then tag your work machine `tag:admin` (Machines → that device → Edit ACL tags). Result: only
+`tag:admin` devices can see or SSH the runner.
 
 ---
 
-## 4. Host firewall — default-deny inbound, management only over the tailnet
+## 4. Firewall — default-deny inbound, and where the real boundary is
 
-The runner needs **no** inbound from anywhere. Allow inbound **only** on the Tailscale interface.
+The runner needs **no** inbound from anywhere.
+
 ```bash
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
-sudo ufw allow in on tailscale0          # management/SSH only over the private mesh
+sudo ufw allow in on tailscale0          # only if you did §3; drop this line otherwise
 sudo ufw --force enable
 sudo ufw status verbose
 ```
-> This blocks **all** public inbound (including LAN SSH). Tailscale itself works fine — it's
-> outbound + NAT-traversal, so it needs no inbound `ufw` rule. If you ever lock yourself out,
-> the operator can use the physical console.
+
+**Know which layer is actually protecting you.** WSL2 is already NAT-isolated from your LAN by
+Windows: nothing in the distro is reachable from off the PC **unless you add a Windows `netsh
+portproxy`**. So do not add one. Keep `ufw` inside the distro as defence in depth, but the outer
+boundary is **Windows Firewall** — plus the tailnet ACLs if you did §3 — not `ufw`.
+
+If you ever lock yourself out, the physical console still works.
 
 ---
 
-## 5. Install the GitHub Actions runner (org-level → serves every repo)
+## 5. Install and register the runner
 
 ### 5.1 Get a registration token
-🧑 OPERATOR: GitHub → `example-org` org → **Settings → Actions → Runners → New runner →
-New self-hosted runner** (Linux x64). Copy the **registration token** shown (it's short-lived,
-~1 hour). Paste it to the agent as `REG_TOKEN` when prompted — **do not commit it anywhere.**
 
-### 5.2 Download + configure as the `ghrunner` user
+🧑 OPERATOR, depending on scope:
+
+- **Organisation:** `https://github.com/organizations/<org>/settings/actions/runners/new` → Linux x64.
+- **Personal account / single repo:** `https://github.com/<owner>/<repo>/settings/actions/runners/new`
+  → Linux x64.
+
+Copy the **registration token**. It is short-lived (~1 hour) and must never be committed, logged,
+or written to a config file — see [`../SECURITY.md`](../SECURITY.md). Minting it is deliberately a
+human step; [`recovery.md`](recovery.md) §5 explains why automating it is left undone.
+
+### 5.2 Download the runner
+
+**Take the current release.** Do not pin a version out of this document — it will be stale by the
+time you read it. Check `https://github.com/actions/runner/releases` and use what is there:
+
 ```bash
 sudo -iu ghrunner bash <<'EOF'
 set -euo pipefail
 mkdir -p ~/actions-runner && cd ~/actions-runner
-# Pin to the current runner release (check https://github.com/actions/runner/releases for latest):
-RUNNER_VERSION="2.319.1"
+RUNNER_VERSION="<the current release tag, without the leading v>"
 curl -fsSL -o runner.tar.gz \
   "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
 tar xzf runner.tar.gz && rm runner.tar.gz
 EOF
 ```
-🧑 OPERATOR: provide `REG_TOKEN`, then the agent runs (replace `<REG_TOKEN>`):
+
+The version is not baked in anywhere afterwards. The runner unpacks `bin` and `externals` as
+symlinks to version-stamped directories (`bin.<version>`, `externals.<version>`), and
+[`slots/run-containerized-slot.sh`](../slots/run-containerized-slot.sh) **resolves those symlinks at
+slot start** rather than hardcoding a path, so a runner self-update does not break the slots. If you
+find a runner version written down in this repo's docs, that is a bug in the docs.
+
+### 5.3 Configure
+
+🧑 OPERATOR provides `REG_TOKEN`, then:
+
 ```bash
+# organisation scope — one registration serves every repo you allow
 sudo -iu ghrunner bash -c '
   cd ~/actions-runner &&
   ./config.sh \
@@ -165,38 +316,65 @@ sudo -iu ghrunner bash -c '
     --unattended --replace'
 ```
 
-### 5.3 Install as a service (survives reboots, starts on boot)
+For a **personal account** the only change is the URL — `https://github.com/<owner>/<repo>` — and
+that you repeat the registration for each repository that needs the runner, because there is no
+runner group to put it in.
+
+`--replace` matters: a ghost entry with the same name usually survives server-side and blocks a
+fresh registration without it.
+
+### 5.4 Install as a service
+
 ```bash
 cd /home/ghrunner/actions-runner
 sudo ./svc.sh install ghrunner
 sudo ./svc.sh start
 sudo ./svc.sh status
 ```
-The runner should now show **Idle / online** in the org Runners page.
+
+The runner should now show **Idle / online** on the Runners page.
+
+For the containerised multi-slot setup rather than one plain persistent runner, carry on into
+[`adding-a-slot.md`](adding-a-slot.md). That is what the installer builds by default, and §6.5 is
+why — including what it costs.
 
 ---
 
-## 6. Hardening (do not skip — this box can reach production)
+## 6. Hardening (do not skip — this box can reach whatever pulls its images)
 
-### 6.1 Private repositories ONLY — never public/fork PRs
-🧑 OPERATOR: GitHub org → Settings → Actions → Runners → runner groups: restrict the runner group
-to selected **private** repos. **Never** allow public repos or runs from outside-contributor PRs —
-a malicious PR would execute on this machine/your home LAN. (GitHub explicitly warns against
-self-hosted + public.)
+### 6.1 Private repositories ONLY — never public, never fork PRs
 
-### 6.2 Workflow uses least-privilege registry auth (no stored PAT here)
-On the **repo side** (not this PC), the build workflow should push with the built-in token:
+🧑 OPERATOR:
+
+- **Organisation:** Settings → Actions → Runner groups. Create a group (these docs call it
+  `joggo-runners`), restrict it to selected **private** repositories, and leave **"Allow public
+  repositories" unchecked**.
+- **Personal account:** there are no runner groups. The boundary is the set of repositories you
+  registered the runner to (§5.3). Register it only to private repositories you control, and treat
+  adding a registration as the same decision an org owner makes on the group page.
+
+Either way: **Settings → Actions → General → Fork PR workflows** → keep "Require approval for all
+outside collaborators", or stricter. A malicious PR would otherwise execute on this machine, inside
+your network. GitHub warns against self-hosted plus public for exactly this reason.
+
+### 6.2 Least-privilege registry auth (no stored PAT here)
+
+On the **repo side**, the build workflow pushes with the built-in token:
+
 ```yaml
 permissions:
   contents: read
   packages: write          # lets GITHUB_TOKEN push to GHCR — no long-lived PAT on the runner
 ```
-So this box stores **no** registry/AWS/SSH/production secrets. Verify none exist:
+
+So this box stores **no** registry, cloud, SSH, or production secrets. Verify none exist:
+
 ```bash
 sudo -iu ghrunner bash -c 'cat ~/.docker/config.json 2>/dev/null; ls -la ~/.aws ~/.ssh 2>/dev/null' || true
 ```
 
 ### 6.3 Disk hygiene (Docker build cache fills disks → builds start failing)
+
 ```bash
 sudo tee /etc/cron.weekly/docker-prune >/dev/null <<'EOF'
 #!/bin/sh
@@ -205,23 +383,36 @@ EOF
 sudo chmod +x /etc/cron.weekly/docker-prune
 ```
 
+Watch inodes as well as bytes. They exhaust separately, and the symptom reads as "disk full" only
+if you look.
+
 ### 6.4 Drop setup privileges
+
 ```bash
-sudo deluser ghrunner sudo   # runner user no longer needs sudo after install
+sudo deluser ghrunner sudo   # the runner user no longer needs sudo after install
 ```
 
-### 6.5 (Phase-2 hardening, recommended before launch) Ephemeral, isolated jobs
-The persistent runner above reuses one environment across jobs. Before you go live, upgrade to
-**ephemeral** runners (`./config.sh ... --ephemeral`, re-registered per job by a small loop or
-the Actions Runner Controller) and/or run each job in a throwaway container, so a poisoned build
-can't persist. Track this as a launch-blocker task; persistent is fine for pre-launch testing.
+### 6.5 Ephemeral, isolated jobs — and what they cost
+
+A persistent runner reuses one environment across jobs, so a poisoned build persists. The
+containerised slots in [`adding-a-slot.md`](adding-a-slot.md) fix that: each job runs in a fresh
+container with its own Docker daemon and a throwaway work volume, via `run.sh --once`.
+
+That is not free, and the price is specific. **`--once` costs 83–108 seconds of container rebuild
+per job, measured**, and GitHub's runner-acquisition timeout races that rebuild at **every** job
+boundary. An 11-job workflow therefore gets eleven chances to die with *"not acquired by Runner of
+type self-hosted"*, not one. On one repository that killed **~11% of jobs**. Persisting the Docker
+daemon and network while recreating only the runner container would recover most of it; that is not
+done here. Decide with that number in front of you.
 
 ---
 
 ## 7. Route the build jobs to this runner (repo side)
 
-In each project's build workflow, change the build job's `runs-on` from `ubuntu-latest` to the
-self-hosted label, and keep a path filter so no-op commits don't build:
+Full client-side runbook: [`onboarding-a-repo.md`](onboarding-a-repo.md). The short version — in
+each project's build workflow, change `runs-on` from `ubuntu-latest` to the runner's labels, and
+keep a path filter so no-op commits do not build:
+
 ```yaml
 on:
   push:
@@ -232,114 +423,58 @@ jobs:
     runs-on: [self-hosted, linux, x64, joggo]
     # ...
 ```
-> Optional resilience: if you also keep `ubuntu-latest` as a fallback label, CI still runs (on paid
-> GitHub minutes) when this PC is down. For pure cost-min pre-launch, omit the fallback and accept
-> "PC down = CI paused."
+
+> Optional resilience: keeping `ubuntu-latest` as a fallback label means CI still runs (on paid
+> minutes) when this PC is down. Omit it and accept "PC down = CI paused."
 
 ---
 
 ## 8. Verification
 
-**On the PC (this agent):**
+On the box:
+
 ```bash
 sudo /home/ghrunner/actions-runner/svc.sh status   # active (running)
-sudo ufw status verbose                              # deny incoming; allow in on tailscale0
-tailscale status                                     # joggo up, tag:ci
-docker run --rm hello-world                          # docker works for the build user context
+sudo ufw status verbose                            # deny incoming
+docker run --rm hello-world                        # docker works for the build user context
+systemctl is-system-running                        # running or degraded — never "offline"
 ```
-🧑 OPERATOR: confirm the runner shows **online/idle** in GitHub org → Runners.
 
-**From the operator's machine (we'll do this together):**
-- `tailscale ping joggo` → succeeds (you're an allowed `tag:admin` device).
-- `ssh ghrunner@joggo` over Tailscale → connects (Tailscale SSH).
-- From a **non-allowed** device → cannot see or reach `joggo` (ACL default-deny). ✅
-- Trigger a tiny test workflow (`runs-on: [self-hosted, joggo]`, `run: echo ok`) → it executes on
-  the PC and goes green, **with zero GitHub-hosted minutes consumed**.
+```powershell
+Get-ScheduledTask -TaskName 'WSL2-keepalive'       # Ready or Running
+```
+
+🧑 OPERATOR: confirm the runner shows **online / idle** in GitHub, then trigger a tiny workflow
+(`runs-on: [self-hosted, linux, x64, joggo]`, `run: echo ok`) and watch it go green with zero
+GitHub-hosted minutes consumed. **An install that has not produced a green build is not finished.**
+
+If you did §3: `tailscale ping joggo` succeeds from an allowed `tag:admin` device,
+`ssh ghrunner@joggo` connects over Tailscale, and a non-allowed device cannot see the box at all.
 
 ---
 
 ## 9. Ongoing ops checklist
-- [ ] Runner shows online after a PC reboot (service auto-starts).
+
+- [ ] Runner shows online after a Windows reboot (keepalive task + enabled units).
+- [ ] `WSL2-keepalive` still registered, and the distro still comes up with nobody logged on.
 - [ ] Weekly `docker system prune` keeps disk healthy (`/var/log/docker-prune.log`).
 - [ ] `unattended-upgrades` applying security patches.
-- [ ] Tailscale key expiry disabled; ACLs still restrict to `tag:admin`.
-- [ ] Runner group still restricted to private repos only.
-- [ ] No production/AWS/SSH secrets present on the box.
-- [ ] (Pre-launch exit) Migrate to ephemeral/isolated jobs, or to managed CodeBuild, before going live.
+- [ ] Runner group — or, on a personal account, the registered repository list — still private-only.
+- [ ] No production, cloud, or SSH secrets present on the box.
+- [ ] Guard thresholds still match the box's RAM if the hardware changed (§1.2).
+- [ ] If you did §3: key expiry still disabled, ACLs still restricted to `tag:admin`.
 
 ---
 
-## 10. Security summary (why this is safe enough for pre-launch)
-- **No public attack surface:** outbound-only runner + default-deny firewall + Tailscale-only mgmt.
-- **Reachable only by specific computers:** Tailscale ACLs (`tag:admin` → `tag:ci`).
-- **Least privilege:** dedicated unprivileged user, no prod/AWS/SSH creds, registry push via
-  short-lived `GITHUB_TOKEN`.
-- **Trusted code only:** private repos, no public/fork PRs.
-- **Bounded blast radius:** worst case is "can push an image" — and the production box still
-  independently health-gates + auto-rolls-back a bad image. Tighten to ephemeral builds before launch.
+## 10. Security summary
 
----
-
-## 11. WSL2 addendum (REQUIRED when the runner runs inside WSL2 on Windows)
-
-If, instead of a native/VM Ubuntu, you run the runner inside **WSL2 Ubuntu** on a Windows PC,
-the Linux steps above (§5 runner, §6 hardening, §3 Tailscale, §4 ufw) are **unchanged** — but
-WSL2 adds four host-level concerns the runbook would otherwise miss. Do all four, or the runner
-will silently stop. Run the `wsl.conf`/`/etc/wsl.conf` edits **inside the distro** and the
-PowerShell/Settings steps **on the Windows host**.
-
-### 11.1 Enable systemd in WSL2 (prerequisite for every `systemctl` / `svc.sh` / docker / tailscale step)
-Without systemd, none of the runbook's service commands work. Inside the distro:
-```bash
-sudo tee /etc/wsl.conf >/dev/null <<'EOF'
-[boot]
-systemd=true
-EOF
-```
-Then **from Windows PowerShell** apply it:
-```powershell
-wsl --shutdown
-```
-Reopen the distro and confirm: `systemctl is-system-running` returns `running` (or `degraded`).
-
-### 11.2 Keep the distro alive across logout/idle (THE big one)
-WSL2 shuts the VM down shortly after its last process exits or when you log off — which kills the
-runner even though systemd is configured. systemd alone does **not** keep the VM up. Fix: a Windows
-Task Scheduler task that holds the distro open 24/7.
-
-🧑 OPERATOR (on the Windows host, elevated PowerShell — adjust `-d Ubuntu` to the distro name):
-```powershell
-$action  = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument '-d Ubuntu --exec sleep infinity'
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-$settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
-Register-ScheduledTask -TaskName 'WSL2-keepalive' -Action $action -Trigger $trigger -Principal $principal -Settings $settings
-```
-This runs **whether or not a user is logged on**, at startup, so WSL2 + systemd (docker, tailscale,
-the runner service) stay up with nobody logged in. Verify after a reboot: from a logged-off state,
-`tailscale ping joggo` from an admin device should still succeed.
-
-### 11.3 Disable **Windows** sleep, not just Linux (§2.4 is insufficient here)
-The runbook's `systemctl mask sleep.target` only covers the Linux side. If **Windows** sleeps, the
-WSL2 VM suspends and CI stops regardless.
-🧑 OPERATOR (Windows host): **Settings → System → Power → Sleep = Never** (both battery & plugged-in).
-If it's a laptop: **Control Panel → Power Options → Choose what closing the lid does → "Do nothing."**
-
-### 11.4 Tailscale: run it **inside the distro** if TUN is available; otherwise fall back to the host
-Recent WSL2 ships `/dev/net/tun`, so `tailscale up` (runbook §3) works **inside the distro**, started
-by systemd — §3 applies as-is. Check first:
-```bash
-test -e /dev/net/tun && echo "TUN available — run Tailscale inside WSL (use §3 as-is)" \
-  || echo "No TUN — install Tailscale on the WINDOWS HOST instead and reach the distro via host → wsl"
-```
-If TUN is missing: install **Tailscale for Windows** on the host, advertise `tag:ci` from there, and
-manage the runner via `wsl -d Ubuntu ...` from a host-level SSH session.
-
-### 11.5 Firewall layering (don't accidentally open WSL2 to the LAN)
-WSL2 is already **NAT-isolated** from your LAN by Windows — nothing in the distro is reachable from
-outside the PC **unless you add a Windows `netsh portproxy`**. So **don't add one.** Keep `ufw` inside
-the distro (§4) as defense-in-depth, but understand the real outer boundary is **Windows Firewall +
-the Tailscale ACLs**, not `ufw`.
-
-> **Net:** the Linux runner/hardening steps are unchanged. The WSL2-specific work is exactly:
-> systemd-on (§11.1) + keep-alive task (§11.2) + Windows-sleep-off (§11.3) + Tailscale-with-TUN (§11.4).
+- **No public attack surface:** outbound-only runner, default-deny firewall, WSL2 NAT isolation, no
+  `portproxy`.
+- **Reachable only by machines you chose**, if remotely reachable at all — §3 is optional.
+- **Least privilege:** dedicated unprivileged user, no production/cloud/SSH credentials, registry
+  push via the short-lived per-job `GITHUB_TOKEN`.
+- **Trusted code only:** private repositories, no public repos, no fork PRs from outside
+  collaborators.
+- **Bounded blast radius:** worst case is "can push an image" — which is only bounded if whatever
+  consumes those images health-gates and can roll back. Check that it does before believing this
+  bullet.

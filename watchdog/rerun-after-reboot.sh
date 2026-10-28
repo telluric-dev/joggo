@@ -20,15 +20,15 @@
 #
 # Auth: uses the Windows gh.exe over WSL interop, which is already signed in
 # via the Windows keyring, so this needs no PAT of its own. If interop or the
-# keyring is unavailable, falls back to a token in /etc/ci-rerun/token.
+# keyring is unavailable, falls back to a token in /etc/joggo-rerun/token.
 set -uo pipefail
 
-CONF_DIR=/etc/ci-rerun
-STATE_DIR=/var/lib/ci-rerun
+CONF_DIR=/etc/joggo-rerun
+STATE_DIR=/var/lib/joggo-rerun
 STATE_FILE="$STATE_DIR/state.json"
 REPOS_FILE="$CONF_DIR/repos"
 TOKEN_FILE="$CONF_DIR/token"
-LOG_FILE=/var/log/ci-rerun.log
+LOG_FILE=/var/log/joggo-rerun.log
 GH_BIN="${CI_RERUN_GH_BIN:-/mnt/c/Program Files/GitHub CLI/gh.exe}"
 # Windows-side, reached the same way as gh.exe. Used only to file the root-cause
 # note into the CI day report; both are optional and failure is non-fatal.
@@ -65,7 +65,7 @@ WINDOW_END_OVERRIDE=""
 
 usage() {
   cat <<'EOF'
-Usage: ci-rerun-after-reboot.sh [options]
+Usage: joggo-rerun-after-reboot.sh [options]
 
   --once                 run a single pass instead of watching for WATCH_MINUTES
   --dry-run              report what would be re-run, change nothing
@@ -73,7 +73,7 @@ Usage: ci-rerun-after-reboot.sh [options]
   --window-end EPOCH     override the end of the reboot window
   -h, --help             this text
 
-Normally invoked at boot by ci-rerun-after-reboot.service. Use --dry-run with
+Normally invoked at boot by joggo-rerun-after-reboot.service. Use --dry-run with
 an explicit window to replay a past incident.
 EOF
 }
@@ -90,7 +90,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 log() {
-  local msg="[ci-rerun] $(date -Is) $*"
+  local msg="[joggo-rerun] $(date -Is) $*"
   echo "$msg"
   printf '%s\n' "$msg" >>"$LOG_FILE" 2>/dev/null || true
 }
@@ -233,7 +233,7 @@ process_repo() {
     if api POST "/repos/$repo/actions/runs/$run_id/rerun-failed-jobs" >/dev/null; then
       log "RERUN $key (failed $updated_at, attempt $attempt)"
       state_record "$key"
-      note_run "$run_id" "Infrastructure, not code: the joggo host rebooted during this run (Windows Update), which kills the in-flight job and usually breaks the one GitHub re-dispatches straight after, while WSL2's network stack is still settling. Retried automatically by ci-rerun-after-reboot."
+      note_run "$run_id" "Infrastructure, not code: the joggo host rebooted during this run (Windows Update), which kills the in-flight job and usually breaks the one GitHub re-dispatches straight after, while WSL2's network stack is still settling. Retried automatically by joggo-rerun-after-reboot."
       RERUNS_THIS_PASS=$(( RERUNS_THIS_PASS + 1 ))
     else
       # Most often the run is already re-running (someone beat us to it).

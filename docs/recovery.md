@@ -17,14 +17,14 @@ description: >-
 ⚠ **Post-cutover unit names.** Since 2026-09-05 the serving unit is **`joggo-slot@1.service`** with
 logs in **`/var/log/joggo-slots/1/_diag/`**; `actions.runner.example-org.joggo.service` is `disabled`
 by design and its `_diag` is frozen at the cutover date. The commands below name the slot; the
-persistent paths remain valid only if you have deliberately rolled back (**upgrade-ci-runner** §3).
+persistent paths remain valid only if you have deliberately rolled back ([`docs/upgrading.md`](upgrading.md) §3).
 
 ⚠ **A fourth cause now has its own coverage: the box rebooted.** Windows Update reboots kill
 in-flight jobs (annotation *"The self-hosted runner lost communication with the server"*) and break
 the job re-dispatched right after. That is **not** any of A/B/C below — the runner is fine by the
-time you look — and it is retried automatically by `ci-rerun-after-reboot.service`. Check
-`journalctl --list-boots | tail -4` and `/var/log/ci-rerun.log` before triaging further. See
-**operate-ci-runner**.
+time you look — and it is retried automatically by `joggo-rerun-after-reboot.service`. Check
+`journalctl --list-boots | tail -4` and `/var/log/joggo-rerun.log` before triaging further. See
+[`docs/operations.md`](operations.md).
 
 ⚠ **A fifth cause: the box was HARD RESET** (power button, or a freeze the operator reset out of).
 This is not A/B/C and not a Windows Update reboot — it leaves **two** faults at once, and fixing
@@ -45,7 +45,7 @@ only the first leaves the box down:
 Measured 2026-09-19: the reset happened at 15:44, the clock fault blocked the slot, and after the
 clock was fixed the slot *still* could not start for 80 minutes because of the leftover network —
 with six jobs queued. **Fix the clock first, then confirm the slot actually starts; do not assume
-the clock fix was the whole job.** `ci-rerun-after-reboot` fires but retries nothing useful here,
+the clock fix was the whole job.** `joggo-rerun-after-reboot` fires but retries nothing useful here,
 because it polls a runner that cannot start.
 
 Three further faults produce the identical symptom — **jobs queued forever, nothing running**.
@@ -64,7 +64,7 @@ The "never restart the runner" rule belongs to **C only**. In B, restarting is e
 ⚠ **Row 1 does not transfer to the slot.** `--once` turnover makes `joggo-slot@1` genuinely
 `inactive` between every job, so "inactive" no longer means "dead" — read **`is-enabled`**
 (should be `enabled`/`indirect`) and the age of the newest `Runner_*.log` instead. A paused slot
-(`ci-pause status`) looks the same again. Treating a normal idle slot as failure A and
+(`joggo-pause status`) looks the same again. Treating a normal idle slot as failure A and
 re-registering it would be an unforced outage.
 
 ```bash
@@ -144,7 +144,7 @@ wsl -d Ubuntu -u root bash -c 'ps -eo cmd | grep -a "[R]unner.Worker" || echo "n
 wsl -d Ubuntu -u root bash -c 'systemctl restart joggo-slot@1.service'
 ```
 (Host `pgrep`/`ps` sees a `Runner.Worker` **inside** the slot container — same PID namespace, same
-absolute runner path — so the in-flight check works unchanged. See **upgrade-ci-runner** §6.)
+absolute runner path — so the in-flight check works unchanged. See [`docs/upgrading.md`](upgrading.md) §6.)
 
 ## 4. Self-heal layers (verify these are still in place)
 
@@ -158,7 +158,7 @@ something nobody is running.
 - **Host clock (the gap layer 1 cannot close).** chrony only owns the GUEST clock, and on WSL2 the
   guest is slaved to Windows — so when the HOST is wrong, `makestep` is powerless no matter how it
   is tuned. Nothing on this box can fix that automatically: setting Windows time needs elevation,
-  and an admin-capable agent on the CI box is the thing setup-ci-runner §6 exists to prevent. What
+  and an admin-capable agent on the CI box is the thing [`runner-setup.md`](runner-setup.md) §6 exists to prevent. What
   IS automated is *detection*: the slot guard names the host and prints the `w32tm` fix, and
   deploy-monitor's fail-reason reports "Runner is REFUSING to start: clock off NTP" with the same
   command instead of leaving the card blank. Check the host's own health periodically:
@@ -203,7 +203,7 @@ never lands on a running job.
 If GitHub deletes the registration (failure A) before the clock recovers, the restart loop
 reconnects the listener but session creation keeps failing: someone must mint a token (§2).
 Automating that needs an org-admin PAT on the box, which contradicts the hardening rule "no
-privileged secrets on the CI box" (setup-ci-runner §6). With layers 1 and 3 the window for GitHub
+privileged secrets on the CI box" ([`runner-setup.md`](runner-setup.md) §6). With layers 1 and 3 the window for GitHub
 to delete a registration is minutes rather than days, so the trade-off is deliberately unresolved.
 If it recurs anyway, a fine-grained PAT scoped to *only* org self-hosted runners is the least-bad
 shape.

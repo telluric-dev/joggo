@@ -46,7 +46,8 @@ step. One object, flat, no nesting.
 | `repo` | `owner/name` | — | required when `scope=repo` |
 | `runnerName` | string | `joggo` | |
 | `labels` | string | `self-hosted,linux,x64,joggo` | |
-| `slots` | int | RAM-scaled: 1 if <12 GB, 2 if 12–32 GB, 3 if >32 GB | |
+| `slots` | int | 1 if <12 GB RAM, otherwise 2. **Never more than 2 by default.** | see below |
+| `filterAaaa` | bool | `false` | install `network/filter-aaaa.conf`; offer it when preflight warns |
 | `distro` | string | `Ubuntu-24.04` | |
 | `runnerUser` | string | `ghrunner` | |
 | `guard` | bool | `true` | the memory guard |
@@ -59,6 +60,29 @@ step. One object, flat, no nesting.
 | `startOnBoot` | bool | `true` | keepalive task + enabled units |
 | `tailscale` | bool | `false` | OPTIONAL. Only for remote management. |
 | `registrationToken` | string | — | never written to the config file; held in memory only |
+
+### On `slots`, and why the default stops at 2
+
+An earlier draft of this contract said "3 if >32 GB". **That was an unmeasured claim and
+it is withdrawn.** Nothing in this repo has ever run more than two slots, and
+`docs/adding-a-slot.md` is explicit that the second slot is only *"mostly free"* and that
+this workload is IO-bound rather than RAM-bound — so RAM is the wrong axis to scale on
+past two, and a tier table implying otherwise invents evidence.
+
+So: **1 slot under 12 GB, 2 otherwise, and never more by default.** `-Slots 3` and above
+must work, because somebody with a big box should be able to try it, but the installer
+must print one line saying the configuration is untested here and that the limit is
+likely disk throughput, not memory. Caught by the docs agent, which was right.
+
+### On `filterAaaa`
+
+Preflight warns when DNS returns AAAA records that do not route, because that makes
+build-time fetches and `docker login ghcr.io` hang rather than fail — it cost this box a
+stalled production pin. But nothing installed the fix, so the warning had no remedy
+attached. Step `45-dns-aaaa` installs `network/filter-aaaa.conf` when `filterAaaa` is
+true. Keep it **opt-in**: it changes name resolution inside the distro, and that is not a
+thing to do to someone silently. When preflight raises the warning it should name the
+flag.
 
 **The registration token must never be persisted.** Not in the config, not in a log,
 not in a transcript. Accept it via `-Token`, an env var, or a wizard prompt that reads
@@ -117,6 +141,15 @@ firmware; Hyper-V/WSL optional features available; ≥8 GB RAM (warn under 12); 
 free on the system drive; power plan will not sleep (fail with the exact `powercfg`
 command if it will).
 
+**DISK — the blocking check is the VHDX drive, not the system drive.** An earlier draft
+said "≥40 GB free on the system drive" and that was wrong: the distro's disk lives
+wherever WSL put it, which is not necessarily `C:`. On the box this came from, `C:` has
+22.5 GB free while the VHDX sits on `D:` with 1.7 TB — so a system-drive check **fails a
+machine with ample room**, and would **pass** one with a roomy `C:` and a full `D:`. Read
+`BasePath` from `HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss` and check that
+drive for ≥40 GB. The system drive stays advisory (≥5 GB, for logs and task state).
+Caught by the preflight agent against this machine, which its own check failed.
+
 *WSL* — `wsl.exe` present; WSL **2**; a usable distro installed or installable;
 `systemd=true` reachable in that distro (this is a hard requirement — `svc.sh`,
 `systemctl`, docker and the slot units all depend on it); the distro is not
@@ -130,15 +163,18 @@ DNS returns AAAA records that do not route, since that silently hangs build-time
 fetches and registry logins (`network/filter-aaaa.conf` is the fix, and preflight
 should say so).
 
-*GitHub* — a registration token or `gh` CLI authenticated; if `scope=org`, warn that
-runner groups are an organisation feature and that a personal account should use
-`-Scope repo`; never print the token.
+*GitHub* — a registration token or `gh` CLI authenticated; resolve the account TYPE rather than warning
+blindly, because an unconditional warning fires on every correct org install:
+Organization -> PASS (name runner groups as the boundary), User -> WARN with the
+`-Scope repo` path, undetermined -> WARN "could not determine"; never print the token.
 
 *Tools* — `curl`, `tar` inside the distro; `pwsh` or `powershell` for the scheduled
 tasks; `gh` only if the user asked for the CLI path.
 
 *Disk inside the distro* — ≥20 GB free, and inodes, because they exhaust separately and
-read as "disk full" only if you look.
+read as "disk full" only if you look. NOTE: btrfs, xfs and overlay report 0
+or "-" for inode totals. That is "nothing to exhaust", not "nothing free", and not a
+pass either -- report WARN "not reportable on this fs".
 
 ## Steps
 
@@ -151,6 +187,8 @@ Ordered, idempotent, each a file under `install/steps/`, each printing
 20-distro             install/confirm the distro; set systemd=true; restart it
 30-runner-user        create the unprivileged runner user
 40-docker             Docker Engine native inside the distro; enable + start
+45-dns-aaaa           OPT-IN (filterAaaa): install network/filter-aaaa.conf so
+                      unroutable AAAA records fail fast instead of hanging
 50-dind-image         build the per-slot Docker-in-Docker image
 60-runner             download the runner, register it, install the service
 70-slots              install the launcher + joggo-slot@ template; create N slots

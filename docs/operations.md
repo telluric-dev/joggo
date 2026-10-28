@@ -1,5 +1,5 @@
 ---
-name: operate-ci-runner
+name: operations
 description: >-
   Use for day-2 operations and debugging of the live self-hosted runner on this Windows+WSL2 box:
   watching jobs land, diagnosing failed runs from the slot's worker logs, jobs killed by Windows
@@ -25,7 +25,7 @@ inactive is not a fault, and not the reason a job is missing.
 | **Current** — containerized slot | `joggo-slot@1.service` (`run-containerized-slot.sh`; containers `joggo-runner-1` + `joggo-dind-1`) | **`/var/log/joggo-slots/1/_diag/`** |
 | Fallback — persistent runner | `actions.runner.example-org.joggo.service` (disabled) | `/home/ghrunner/actions-runner/_diag/` |
 
-Never enable both — they `Conflicts=`. See **upgrade-ci-runner** for cutover/rollback and posture.
+Never enable both — they `Conflicts=`. See [`docs/upgrading.md`](upgrading.md) for cutover/rollback and posture.
 
 ⚠ **`journalctl` prints LOCAL time (UTC+3, IDT); the runner's own log lines are UTC.** A job GitHub
 reports at 23:43 UTC sits at **02:43** in the journal. Query the UTC figure and the window comes
@@ -73,7 +73,7 @@ as `INPUT_*`, etc.).
   client **containerized-tests** skill.
 - **`pnpm/action-setup` "self-installer exits with code 1" / missing `node`** → Windows-PATH leak +
   no clean Linux node. Fix on the runner: `appendWindowsPath=false`, clean `.path`, install Node LTS
-  (see **setup-ci-runner**). Verify a job's PATH: `node -v; pnpm -v` resolve under `/usr/bin`.
+  (see [`runner-setup.md`](runner-setup.md) §2). Verify a job's PATH: `node -v; pnpm -v` resolve under `/usr/bin`.
 - **A Windows Update reboot ate the job.** This box still takes unattended update reboots, and they
   are *not* rare — 2026-09-09 took **three** in six minutes (02:29→02:35 IDT). One reboot produces
   two different-looking failures, and neither mentions rebooting:
@@ -98,33 +98,33 @@ as `INPUT_*`, etc.).
   (active hours / `NoAutoRebootWithLoggedOnUsers`), which is a host decision, not a runner one.
 
 ## Automatic retry after a reboot
-`ci-rerun-after-reboot.service` (oneshot, enabled, ordered after `joggo-slot@1`) re-runs jobs this box
+`joggo-rerun-after-reboot.service` (oneshot, enabled, ordered after `joggo-slot@1`) re-runs jobs this box
 lost to a reboot, so neither failure class above needs a human.
 
 ```bash
-/usr/local/sbin/ci-rerun-after-reboot.sh --once --dry-run       # what it would do, changes nothing
-tail -20 /var/log/ci-rerun.log                                  # what it has done
+/usr/local/sbin/joggo-rerun-after-reboot.sh --once --dry-run       # what it would do, changes nothing
+tail -20 /var/log/joggo-rerun.log                                  # what it has done
 ```
 - **Window** — previous boot's end (from `journalctl --list-boots -o json`) through boot + 35 min.
   It *polls* across that window rather than checking once, because the post-reboot failure lands
   several minutes after boot; a one-shot check at boot is too early to see it.
 - **Scope** — a run qualifies only if one of its **failed** jobs reports `runner_name: joggo`.
   Match on the runner *name*, not the label set: 10 of the 12 callers use the subset labels
-  (`self-hosted, linux, x64`) with no `joggo` in them. Repo list: `/etc/ci-rerun/repos`, kept in
+  (`self-hosted, linux, x64`) with no `joggo` in them. Repo list: `/etc/joggo-rerun/repos`, kept in
   step with the `-Repos` default in `monitor/day-report.ps1`.
-- **Rails** — one retry per run ever (`/var/lib/ci-rerun/state.json`, survives reboots), skips runs
+- **Rails** — one retry per run ever (`/var/lib/joggo-rerun/state.json`, survives reboots), skips runs
   already at attempt ≥3, caps at 10 per pass, never fails the boot transaction.
 - **Auth** — the Windows `gh.exe` over WSL interop, already signed in via the Windows keyring, so
   **no PAT is stored on the box**. Verified to work from inside a systemd unit, not just an
-  interactive shell. Falls back to `/etc/ci-rerun/token`.
+  interactive shell. Falls back to `/etc/joggo-rerun/token`.
 - ⚠ **Editing it:** any `gh`/`curl` call inside a `while read` loop needs `</dev/null`, or the
   client drains the loop's stdin and the pass silently processes one repo and one run.
 
 ## The CI day report (what failed, and why)
 `monitor/day-report.ps1` renders every job that finished today to
-`~/.claude/ci-day/ci-day.html` — successes as one row, failures as a card with the failed job, the
+`~/.claude/joggo-day/joggo-day.html` — successes as one row, failures as a card with the failed job, the
 error lines from the run log, and a root-cause note if one exists. Root-cause prose lives in
-`~/.claude/ci-day/notes.json`, keyed by run id.
+`~/.claude/joggo-day/notes.json`, keyed by run id.
 
 `day-report.timer` refreshes it **hourly** (oneshot service driving Windows `powershell.exe` over
 interop; `Persistent=true` so it catches up after the box was off). The page empties itself when the
@@ -134,7 +134,7 @@ UTC date rolls — the CI day is 03:00→03:00 local — so there is no end-of-d
 systemctl list-timers day-report.timer --no-pager    # next run
 systemctl start day-report.service                   # render now (~45 s)
 ```
-`ci-rerun-after-reboot` **writes its own note** for every run it retries, because the reboot class is
+`joggo-rerun-after-reboot` **writes its own note** for every run it retries, because the reboot class is
 the one diagnosis a script can make with confidence — the same code that decided the run was
 reboot-caused records why. Everything else still wants a human:
 
@@ -154,7 +154,8 @@ wsl --shutdown
 Start-ScheduledTask -TaskName 'WSL2-keepalive'   # reboots the distro headless + holds the VM up
 ```
 Then verify services come back (`docker` may lag a few seconds — `systemctl start docker` if needed),
-the runner shows **Listening for Jobs**, tailscale is online, and `$PATH` has zero `/mnt/c`.
+the runner shows **Listening for Jobs**, `$PATH` has zero `/mnt/c`, and — only if you run Tailscale
+— that it is back online.
 
 ## Guardrails
 - Never delete/overwrite the user's running dev containers, databases, or data without asking; prefer
@@ -162,5 +163,5 @@ the runner shows **Listening for Jobs**, tailscale is online, and `$PATH` has ze
 - The reusable workflows' `uses: example-org/joggo/...@main` only resolve once this repo is
   pushed to the `example-org` org on GitHub.
 - Before **changing** the runner (cutover, version upgrade, self-heal edits, WSL config), use the
-  **upgrade-ci-runner** skill: restore point → baseline `runner-smoke` → change → smoke → keep or
+  [`docs/upgrading.md`](upgrading.md) skill: restore point → baseline `runner-smoke` → change → smoke → keep or
   roll back. It also lists the verification traps that make a broken runner read as healthy.

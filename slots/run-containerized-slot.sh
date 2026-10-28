@@ -49,16 +49,16 @@
 #   PULL_ONLY=1 ./run-containerized-slot.sh 1   # pre-pull images, verify, exit
 #   DRY_RUN=1  ./run-containerized-slot.sh 1    # print the plan, touch nothing
 #
-# PAUSE. If /var/lib/ci-slot/<slot>.paused exists this script holds instead of starting a
+# PAUSE. If /var/lib/joggo-slot/<slot>.paused exists this script holds instead of starting a
 # listener — no containers at all. See slots/slot-pause.sh; that flag path is the contract.
 set -uo pipefail
 
 SLOT="${1:-1}"
 RUNNER_ROOT="${RUNNER_ROOT:-/home/ghrunner/actions-runner}"
-# Thin ORG image, not the upstream one: see tools/runner-image/Dockerfile. The stock
+# Thin ORG image, not the upstream one: see slots/runner-image/Dockerfile. The stock
 # ghcr.io/actions/actions-runner lacks libatomic1 (every pnpm repo fails), zstd
 # (actions/cache) and git-lfs — all of which the persistent host runner had for free.
-# Build with: docker build -t joggo/actions-runner:local tools/runner-image
+# Build with: docker build -t joggo/actions-runner:local slots/runner-image
 RUNNER_IMAGE="${RUNNER_IMAGE:-joggo/actions-runner:local}"
 DIND_IMAGE="${DIND_IMAGE:-joggo/dind:local}"
 NET="joggo-slot-$SLOT"
@@ -100,7 +100,7 @@ log() { echo "[slot $SLOT] $*"; }
 # The counter is a file so it survives the process; a successful run clears it. Escalates
 # 0s -> 15s -> 30s -> 60s -> 120s (capped), so a genuinely broken box settles at ~30 attempts
 # an hour instead of hammering the GitHub API, while a healthy one pays nothing.
-FAILSTAMP="${FAILSTAMP:-/var/lib/ci-slot/${SLOT}.fails}"
+FAILSTAMP="${FAILSTAMP:-/var/lib/joggo-slot/${SLOT}.fails}"
 die() {
     log "FATAL: $*"
     local n=0
@@ -131,13 +131,13 @@ clear_failures() { rm -f "$FAILSTAMP" 2>/dev/null || true; }
 # Nothing is lost by holding. The registration stays (this slot is not --ephemeral), so
 # GitHub keeps queueing runs against joggo and hands them over oldest-first on resume.
 # GitHub does expire a queued job after 24h, which makes this an afternoon lever rather
-# than a weekend one — see the header of ci-pause.sh.
-PAUSE_FLAG="${PAUSE_FLAG:-/var/lib/ci-slot/${SLOT}.paused}"
+# than a weekend one — see the header of joggo-pause.sh.
+PAUSE_FLAG="${PAUSE_FLAG:-/var/lib/joggo-slot/${SLOT}.paused}"
 PAUSE_POLL="${PAUSE_POLL:-10}"
 hold_while_paused() {
     [ -e "$PAUSE_FLAG" ] || return 0
     log "PAUSED — $(head -1 "$PAUSE_FLAG" 2>/dev/null || echo 'no reason recorded')"
-    log "holding: no listener, no dind, no volumes. Resume with: ci-pause resume"
+    log "holding: no listener, no dind, no volumes. Resume with: joggo-pause resume"
     local waited=0
     while [ -e "$PAUSE_FLAG" ]; do
         sleep "$PAUSE_POLL"
@@ -204,7 +204,7 @@ cleanup() {
     # whose route was still linkdown. A bridge holds no job state - isolation comes from the
     # fresh image store and the fresh _work volume, both still destroyed below - so keeping it
     # costs nothing and removes the race. It is reclaimed at the next start if its subnet is
-    # ever wrong, and `ci-pause` users can still remove it by hand.
+    # ever wrong, and `joggo-pause` users can still remove it by hand.
     # NB: DIAG_DIR is host-side and deliberately NOT removed — see its declaration.
     docker volume  rm "$WORK_VOL" "$ROOT_VOL" >/dev/null 2>&1 || true
     # Legacy: _diag used to be a per-slot VOLUME before it moved to a host bind on 2026-09-05.
@@ -298,7 +298,7 @@ main() {
         docker pull -q "$img" >/dev/null 2>&1 || true
         docker image inspect "$img" >/dev/null 2>&1 && continue
         case "$img" in
-            "$RUNNER_IMAGE") how="docker build -t $RUNNER_IMAGE tools/runner-image" ;;
+            "$RUNNER_IMAGE") how="docker build -t $RUNNER_IMAGE slots/runner-image" ;;
             "$DIND_IMAGE")   how="slots/dind-image/build.sh   (or fall back: DIND_IMAGE=docker:28-dind)" ;;
             *)               how="unknown image — check RUNNER_IMAGE/DIND_IMAGE" ;;
         esac

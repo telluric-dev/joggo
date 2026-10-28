@@ -1,13 +1,13 @@
 [Unit]
 Description=Re-run CI jobs that failed because joggo rebooted
-Documentation=file:/usr/local/sbin/ci-rerun-after-reboot.sh
+Documentation=file:/usr/local/sbin/joggo-rerun-after-reboot.sh
 # The runner slot must be back before retried jobs have anywhere to land.
 After=network-online.target docker.service joggo-slot@1.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/ci-rerun-after-reboot.sh
+ExecStart=/usr/local/sbin/joggo-rerun-after-reboot.sh
 # The script watches for ~35 min after boot, so it must not be reaped early.
 TimeoutStartSec=3600
 # Never let a bad pass block the boot transaction.

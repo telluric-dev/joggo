@@ -37,13 +37,13 @@ param(
   # The pause lever is a FLAG FILE, not a systemd state: run-containerized-slot.sh reads it
   # before it builds anything and holds without a listener (slots/slot-pause.sh). That path is
   # the whole contract, which is why the monitor can drive the pause even on a box where
-  # ci-pause was never installed.
-  [string]$PauseFlag = "/var/lib/ci-slot/1.paused",
-  [string]$PauseCmd = "/usr/local/sbin/ci-pause",
+  # joggo-pause was never installed.
+  [string]$PauseFlag = "/var/lib/joggo-slot/1.paused",
+  [string]$PauseCmd = "/usr/local/sbin/joggo-pause",
   # Journal read window. See the comment at $since in Get-JournalDeploys for why this is 24h
   # and not 14 days, with the timings that decided it.
   [string]$JournalWindow = "24 hours ago",
-  # Repos to ask GitHub about for the QUEUE. Defaults to the box's ci-fail-watch list, which is
+  # Repos to ask GitHub about for the QUEUE. Defaults to an optional joggo-repos file (one owner/repo per line), which is
   # the same set the failure watcher polls. Empty string disables the file and falls back to the
   # journal-derived set alone.
   [string]$QueueRepoFile = ""
@@ -105,7 +105,7 @@ function Get-QueueRepos {
     if(-not $root -and $PSCommandPath){ $root=Split-Path -Parent $PSCommandPath }
     if(-not $root -and $MyInvocation.MyCommand.Path){ $root=Split-Path -Parent $MyInvocation.MyCommand.Path }
     if(-not $root){ return @() }
-    $f=Join-Path $root 'ci-fail-watch-repos'
+    $f=Join-Path $root 'joggo-repos'
   }
   if(-not (Test-Path $f)){ return @() }
   try {
@@ -216,7 +216,7 @@ function Get-PauseState {
 # file itself so the button still works on a box where the script was never installed — the
 # fallback sets the same flag, so the slot still holds, just without the niceties.
 #
-# RUNS OFF THE UI THREAD. A pause is not instant: ci-pause stops the listener with a 30s docker
+# RUNS OFF THE UI THREAD. A pause is not instant: joggo-pause stops the listener with a 30s docker
 # stop grace and then waits up to 20s for the launcher's trap to tear down dind, the network and
 # the volumes. Called inline that froze WPF for the whole time — no repaint, no spinner, and a
 # window Windows would offer to kill. So it runs in its own runspace and a 200ms DispatcherTimer
@@ -226,9 +226,9 @@ function Start-RunnerPause([bool]$on){
   # same flag files, so letting them overlap would race over what paused means.
   if($global:pauseOp -or $global:slotOp){ return }
   $dir=[System.IO.Path]::GetDirectoryName($PauseFlag) -replace '\','/'
-  # Over EVERY registered slot, so the lever means the same thing the badge does. ci-pause
+  # Over EVERY registered slot, so the lever means the same thing the badge does. joggo-pause
   # takes --slot N; the fallback writes the same flag the launcher reads, so an uninstalled
-  # ci-pause still holds the box -- just without the drain report and the page-cache reclaim.
+  # joggo-pause still holds the box -- just without the drain report and the page-cache reclaim.
   #
   # The slot numbers are resolved HERE and the command is a flat `;`-joined list. A `for`
   # loop over $(systemctl ...) reads better and does not survive: PS 5.1's native-argument
@@ -253,7 +253,7 @@ function Start-RunnerPause([bool]$on){
   # model has to know about the transition before the redraw, or the click looks ignored.
   $m=$global:wins['control'].model; if($m){ $m.pending=$on }
   Render-Win 'control'
-  # Cap the wait. ci-pause's own worst case is ~50s; 90s means a wedged wsl.exe surfaces as an
+  # Cap the wait. joggo-pause's own worst case is ~50s; 90s means a wedged wsl.exe surfaces as an
   # error the operator can see instead of a control that spins for ever.
   $t=New-Object System.Windows.Threading.DispatcherTimer; $t.Interval=[TimeSpan]::FromMilliseconds(200)
   $t.Add_Tick({
@@ -282,9 +282,9 @@ function Start-RunnerPause([bool]$on){
 # believe the flag rather than the intent -- but for ONE slot.
 #
 # There is no optimistic state here. Start-RunnerPause can set $global:pauseState because it owns
-# the box-wide answer; a slot's truth is the flag file, which ci-slots-status.sh reads on the next
+# the box-wide answer; a slot's truth is the flag file, which joggo-slots-status.sh reads on the next
 # gather. So the pill shows the transition while it runs and then shows whatever the box says,
-# which cannot drift from reality even if ci-pause fails halfway.
+# which cannot drift from reality even if joggo-pause fails halfway.
 function Start-SlotPause([int]$slot,[bool]$on){
   if($global:pauseOp -or $global:slotOp){ return }
   $what = if($on){'Hold'}else{'Resume'}
@@ -360,7 +360,7 @@ function Get-WorkerMeta {
   # created per slot, so the number is authoritative; the persistent runner's own _diag has no
   # slot and reports $null rather than pretending to be slot 1.
   $slotOf=@{}
-  foreach($fp in $files){ $slotOf[$fp]=$(if($fp -match '/ci-slots/(\d+)/_diag/'){ [int]$matches[1] }else{ $null }) }
+  foreach($fp in $files){ $slotOf[$fp]=$(if($fp -match '/joggo-slots/(\d+)/_diag/'){ [int]$matches[1] }else{ $null }) }
   # Stamp liveness and slot onto whatever the cache hands back, on EVERY call.
   $stamp={ param($e,$fp) if($e){ $e.mtime=$mtOf[$fp]; $e.slot=$slotOf[$fp] }; $e }
   # Re-read a log until BOTH planId and repo are known, not just planId.
@@ -595,7 +595,7 @@ function Get-JournalDeploys {
     #
     # Liveness is the honest test: the runner writes to its Worker log continuously while the job
     # runs, so a log touched seconds ago is a job that is running, however long it has been going.
-    # 150s of slack over the ci-slots-status threshold (90s), because that file is also read
+    # 150s of slack over the joggo-slots-status threshold (90s), because that file is also read
     # through a starved wsl.exe.
     #
     # With no Worker log matched we are blind and fall back to elapsed time -- but at 6h, not 1h.
@@ -1533,7 +1533,7 @@ function Get-JournalFailReason {
 # and a naive port would have lost: Get-WorkerMeta's $script:wmCache/$script:wmRetry live in
 # it, so the per-log parse cache survives across ticks instead of being rebuilt every 15s.
 $script:runnerLine=''
-# Where ci-slots-status.sh lives, as WSL sees it. Resolved once, because it is fixed for the
+# Where joggo-slots-status.sh lives, as WSL sees it. Resolved once, because it is fixed for the
 # life of the process and the worker runspace needs it handed across as a plain string.
 #
 # Same fallback chain as Get-QueueRepos, for the same reason: $PSScriptRoot is empty under
@@ -1545,7 +1545,7 @@ try {
   if(-not $root -and $PSCommandPath){ $root=Split-Path -Parent $PSCommandPath }
   if(-not $root -and $MyInvocation.MyCommand.Path){ $root=Split-Path -Parent $MyInvocation.MyCommand.Path }
   if($root){
-    $sp = Join-Path $root 'ci-slots-status.sh'
+    $sp = Join-Path $root 'joggo-slots-status.sh'
     # A drive letter, not a UNC path: /mnt/<letter> has no meaning for \\server\share, and a
     # checkout there would need a mount this box does not have. Leave it $null and skip the strip.
     if((Test-Path $sp) -and $sp -match '^[A-Za-z]:'){

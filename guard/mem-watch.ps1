@@ -241,7 +241,7 @@ if($tripReason -ne '' -and ($cooled -or $SnapshotNow)){
   # A single budget over a compound command cannot tell you WHICH part was slow, so it
   # attributes every timeout to "WSL". The first version of this script did exactly that
   # and reported "WSL DID NOT ANSWER IN 20s" at a moment when `wsl -- echo ok` was
-  # answering in 250ms — the slow part was `ci-pause status`, which shells out to docker.
+  # answering in 250ms — the slow part was `joggo-pause status`, which shells out to docker.
   # That is the same defect this box's memory guard has: a probe that cannot distinguish
   # "the subject is broken" from "my query was slow" will blame the subject.
   #
@@ -282,8 +282,8 @@ if($tripReason -ne '' -and ($cooled -or $SnapshotNow)){
   Probe 'vm-mem'     'free -m | head -2'                                    8000
   Probe 'workers'    'ps -eo cmd | grep -ac "[R]unner.Worker" || true'      8000
   Probe 'containers' 'docker ps --format ''{{.Names}} {{.Status}}''' 15000
-  Probe 'slot1'      '/usr/local/sbin/ci-pause status --slot 1 | head -4' 15000
-  Probe 'slot2'      '/usr/local/sbin/ci-pause status --slot 2 | head -4' 15000
+  Probe 'slot1'      '/usr/local/sbin/joggo-pause status --slot 1 | head -4' 15000
+  Probe 'slot2'      '/usr/local/sbin/joggo-pause status --slot 2 | head -4' 15000
 
   $out.Add('')
   $out.Add('---- recent system events (ids relevant to resource exhaustion) ----')

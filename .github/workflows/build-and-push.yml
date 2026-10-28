@@ -1,7 +1,7 @@
 # Reusable build-and-push workflow for the org's self-hosted CI runner.
 #
 # Companion to ../../self-hosted-joggo-runner-setup.md (server) and
-# ../../client-project-ci-setup.md (consumer). Runs on the home-PC self-hosted
+# ../../client-project-joggo-setup.md (consumer). Runs on the home-PC self-hosted
 # runner, builds x86-64 image(s), and pushes to GHCR using the built-in
 # GITHUB_TOKEN — no long-lived registry PAT lives on the runner.
 #

@@ -750,10 +750,16 @@ function Register-JoggoTask {
   if($EveryMinutes -gt 0){
     # A repetition on an AtStartup trigger, not a daily one: the box reboots for
     # Windows Update and a daily trigger would leave a gap until the next day.
+    #
+    # NO -RepetitionDuration. [TimeSpan]::MaxValue serialises as P99999999DT23H59M59S, which
+    # the task XML schema rejects -- "The task XML contains a value which is incorrectly
+    # formatted or out of range", on the first elevated install, at the guard. An EMPTY duration
+    # is what "repeat indefinitely" is in the XML, and it is exactly what the guard task this
+    # was extracted from has (interval=PT5M, duration empty). Reproduced and fixed against a
+    # throwaway user task: the MaxValue form fails with that message, this form registers.
     $trigger = New-ScheduledTaskTrigger -AtStartup
     $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
-        -RepetitionInterval (New-TimeSpan -Minutes $EveryMinutes) `
-        -RepetitionDuration ([TimeSpan]::MaxValue)).Repetition
+        -RepetitionInterval (New-TimeSpan -Minutes $EveryMinutes)).Repetition
   } else {
     $trigger = New-ScheduledTaskTrigger -AtStartup
   }

@@ -335,15 +335,18 @@ admit. The shell scripts pass `bash -n`; the reusable workflows are exercised da
 real builds but are not validated in this repository.
 
 **What has been run for real, end to end.** On a fresh Ubuntu 24.04 distro, Windows 11,
-16 GB, as an ordinary (unelevated) user, against a real repository:
+16 GB, as an ordinary user — **no elevation at any point** — against a real repository:
 
 | | Result |
 |---|---|
 | Install, 2 slots | every step passes; verify reports 0 failures |
 | Both runners online on GitHub | yes, and **still online 150 s after the installer exited** with nothing touching WSL |
 | Re-run with `-Slots 1` | slot 2 retired: disabled, **deregistered**, root removed; slot 1 untouched |
-| Uninstall `-Deep` | 0 runners left on GitHub, 0 tasks, `C:\ProgramData\joggo` gone, logs kept |
-| Elevated install (guard, sampler, SYSTEM keepalive) | **not yet run end to end** — the steps are the same code paths the guard has used for months on the original box, but this repository's installer has not registered them on a clean machine |
+| Install with everything on (guard, sampler, keepalive) | exit 0. Guard and sampler run as you and exit 0; the sampler's trail grows on schedule; the keepalive is still running 20 s and 150 s later; the guard reads the distro's live job count |
+| Uninstall `-Deep` | 0 runners left on GitHub, 0 tasks, logs kept |
+
+Not yet run: a reboot followed by logon (the tasks come back at logon by design), and any
+machine other than the one this was extracted from.
 
 Getting there found **more than twenty** defects. About ten stopped every install outright; the
 rest left something broken behind. None was visible to a dry run. The ones worth knowing:
@@ -355,8 +358,12 @@ rest left something broken behind. None was visible to a dry run. The ones worth
   subnet black-hole each other's traffic. The default subnet is now configurable, and the
   launcher refuses a subnet something else already routes.
 - **WSL powers a distro off ~30 s after its last session closes.** Without a keepalive the
-  runner passed verify and went offline when the installer exited. Unelevated, the keepalive
-  now runs as you at logon.
+  runner passed verify and went offline when the installer exited.
+- **A SYSTEM scheduled task cannot see your WSL distro** — distros are registered per Windows
+  user. The installer used SYSTEM for the keepalive, guard and sampler, "so they work with
+  nobody logged on"; the keepalive started and exited -1 within seconds. Every task now runs as
+  you, at logon, like the guard on the original box. So the box must stay logged in (lock the
+  screen), and the install needs no elevation.
 - **The runner image runs as uid 1001;** a fresh `useradd` picks 1000, and every slot
   crash-looped on its first write. `ghrunner` is now created as 1001.
 - **Text sent to the distro was re-encoded twice** (ANSI read, console-codepage pipe), so

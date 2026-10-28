@@ -146,16 +146,27 @@ $delta = $prevFree - $free
 # unchanged, so prior readers keep working. Anything parsing by header name must treat
 # the trailing columns as optional, and a reader wanting chromePB must tolerate rows
 # that predate it. Do not insert new fields in the middle.
+# A WRITE THAT FAILS MUST FAIL THE RUN. Every write below used to be best-effort under
+# ErrorActionPreference=Continue, so a sampler that could not write its own trail printed
+# an UnauthorizedAccessException to a console nobody reads and EXITED 0 -- the scheduler
+# recorded success, and the trail simply stopped. Found when the sampler ran as the user
+# against files an earlier SYSTEM run had created. Exit 2 means "ran, recorded nothing".
+function Save-OrDie([scriptblock]$write, [string]$what){
+  try { & $write } catch {
+    [Console]::Error.WriteLine("mem-watch: could not write $what -- $($_.Exception.Message)")
+    exit 2
+  }
+}
 if(-not (Test-Path $csv)){
-  'ts,freeMB,totalMB,commitMB,pagefileMB,vmmemMB,claudeN,claudeWS,claudePB,dropboxWS,dropboxPB,svchostN,svchostWS,nodeN,nodeWS,edgeWS,memcompWS,procCount,handles,threads,deltaMB,wtermPB,chromePB' |
-    Out-File -FilePath $csv -Encoding utf8
+  Save-OrDie { 'ts,freeMB,totalMB,commitMB,pagefileMB,vmmemMB,claudeN,claudeWS,claudePB,dropboxWS,dropboxPB,svchostN,svchostWS,nodeN,nodeWS,edgeWS,memcompWS,procCount,handles,threads,deltaMB,wtermPB,chromePB' |
+    Out-File -FilePath $csv -Encoding utf8 -ErrorAction Stop } $csv
 }
 $line = '{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16},{17},{18},{19},{20},{21},{22}' -f `
   $now.ToString('yyyy-MM-ddTHH:mm:sszzz'), $free, $tot, $commit, $pfUsed, $vm.WS,
   $claude.N, $claude.WS, $claude.PB, $dropbox.WS, $dropbox.PB,
   $svc.N, $svc.WS, $node.N, $node.WS, $edge.WS, $memcomp.WS,
   @($procs).Count, $handles, $threads, $delta, $wterm.PB, $chrome.PB
-Add-Content -Path $csv -Value $line
+Save-OrDie { Add-Content -Path $csv -Value $line -ErrorAction Stop } $csv
 
 # ---------- decide whether this is a trip ----------
 
@@ -305,15 +316,15 @@ if($tripReason -ne '' -and ($cooled -or $SnapshotNow)){
       $out.Add(('  {0} id={1} :: {2}' -f $_.TimeCreated.ToString('HH:mm:ss'),$_.Id,$m)) } }
   } catch { $out.Add('  (event log query failed)') }
 
-  $out | Out-File -FilePath $snap -Encoding utf8
+  Save-OrDie { $out | Out-File -FilePath $snap -Encoding utf8 -ErrorAction Stop } $snap
   $wrote = $snap
   $lastSnap = $now
 }
 
 # ---------- persist state ----------
 
-@{ free = $free; lastSnap = $lastSnap.ToString('o') } | ConvertTo-Json -Compress |
-  Out-File -FilePath $stateF -Encoding utf8
+Save-OrDie { @{ free = $free; lastSnap = $lastSnap.ToString('o') } | ConvertTo-Json -Compress |
+  Out-File -FilePath $stateF -Encoding utf8 -ErrorAction Stop } $stateF
 
 if(-not $Quiet){
   $msg = 'free {0}MB vmmem {1}MB claude {2}MB/{3}p dropbox {4}MB commit {5}MB delta {6}MB' -f `

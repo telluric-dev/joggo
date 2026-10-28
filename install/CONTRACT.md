@@ -57,7 +57,7 @@ step. One object, flat, no nesting.
 | `sampler` | bool | `true` | mem-watch.ps1, the 5-minute trail |
 | `watchdog` | bool | `true` | the wedge detector |
 | `monitor` | bool | `false` | the WPF monitor; off by default, it is a desktop app |
-| `startOnBoot` | bool | `true` | keepalive task + enabled units. SYSTEM at startup when elevated; the installing user at logon when not |
+| `startOnBoot` | bool | `true` | keepalive task + enabled units. Runs as the installing user at logon (SYSTEM cannot see a user's WSL distro) |
 | `dockerDns` | string | `''` | comma-separated container DNS servers. Empty = the Windows adapters that are up, then 1.1.1.1/8.8.8.8; each is queried before use, and only applied when WSL tunnels DNS and daemon.json sets none |
 | `tailscale` | bool | `false` | OPTIONAL. Only for remote management. |
 | `registrationToken` | string | — | never written to the config file; held in memory only |

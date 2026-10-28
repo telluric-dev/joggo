@@ -719,10 +719,22 @@ function Get-WslDistros {
 # the task runs", and nothing in the repo ever created that task. So the guard
 # shipped as code that never ran.
 #
-# Every task registered here is: SYSTEM (so it works with nobody logged on),
-# AtStartup (so it survives a reboot), -AllowStartIfOnBatteries
-# -DontStopIfGoingOnBatteries (the default settings STOP a task on battery, and
-# a laptop CI box would silently lose its guard on a power blip).
+# EVERY TASK RUNS AS THE INSTALLING USER -- Interactive, not elevated -- because that is the
+# only principal that can see the user's WSL distro. Distros are registered per Windows user;
+# a SYSTEM task calling `wsl -d <distro>` finds nothing. These used to be SYSTEM at startup,
+# meant to work with nobody logged on, and the first elevated install showed what that buys:
+# the keepalive started, exited -1 within seconds, and the guard's WSL calls -- the ones that
+# pause slots and restart the VM -- would have had nothing to talk to. The configuration
+# copied here is the one the machine this was extracted from has run for weeks: its guard and
+# sampler are the user, Interactive, Limited run level, a 5-minute time trigger plus a logon
+# trigger -- and that guard has paused slots and restarted WSL in anger.
+#
+# Consequences, stated rather than discovered: registering a task as yourself needs no admin,
+# so none of these needs elevation; and CI runs while that user is logged in (lock the screen,
+# do not log off). -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries because the defaults
+# STOP a task on battery, and a laptop CI box would silently lose its guard on a power blip.
+
+function Get-JoggoTaskUser { [Security.Principal.WindowsIdentity]::GetCurrent().Name }
 
 function Register-JoggoTask {
   param(
@@ -731,37 +743,30 @@ function Register-JoggoTask {
     [Parameter(Mandatory=$true)][string]$Exe,
     [Parameter(Mandatory=$true)][string]$Arguments,
     [int]$EveryMinutes = 0,
-    [switch]$AtStartupOnly,
     [string]$Description = ''
   )
+  $who = Get-JoggoTaskUser
   if($Ctx.DryRun){
-    $iv = 'at startup only'
-    if($EveryMinutes -gt 0){ $iv = "every $EveryMinutes min, indefinitely, from startup" }
-    Plan $Ctx "would register scheduled task '$Name' as SYSTEM, $iv"
+    $iv = 'at logon'
+    if($EveryMinutes -gt 0){ $iv = "every $EveryMinutes min indefinitely, and at logon" }
+    Plan $Ctx "would register scheduled task '$Name' as $who (Interactive, not elevated), $iv"
     Plan $Ctx "  action: $Exe $Arguments"
     return $true
   }
 
   $action    = New-ScheduledTaskAction -Execute $Exe -Argument $Arguments
-  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+  $principal = New-ScheduledTaskPrincipal -UserId $who -LogonType Interactive -RunLevel Limited
   $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
                  -StartWhenAvailable -MultipleInstances IgnoreNew `
                  -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+  $triggers = @(New-ScheduledTaskTrigger -AtLogOn -User $who)
   if($EveryMinutes -gt 0){
-    # A repetition on an AtStartup trigger, not a daily one: the box reboots for
-    # Windows Update and a daily trigger would leave a gap until the next day.
-    #
-    # NO -RepetitionDuration. [TimeSpan]::MaxValue serialises as P99999999DT23H59M59S, which
-    # the task XML schema rejects -- "The task XML contains a value which is incorrectly
-    # formatted or out of range", on the first elevated install, at the guard. An EMPTY duration
-    # is what "repeat indefinitely" is in the XML, and it is exactly what the guard task this
-    # was extracted from has (interval=PT5M, duration empty). Reproduced and fixed against a
-    # throwaway user task: the MaxValue form fails with that message, this form registers.
-    $trigger = New-ScheduledTaskTrigger -AtStartup
-    $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
-        -RepetitionInterval (New-TimeSpan -Minutes $EveryMinutes)).Repetition
-  } else {
-    $trigger = New-ScheduledTaskTrigger -AtStartup
+    # A time trigger repeating indefinitely, plus the logon trigger -- the shape of the guard
+    # this was extracted from. NO -RepetitionDuration: [TimeSpan]::MaxValue serialises as
+    # P99999999DT23H59M59S, which the task XML schema rejects ("incorrectly formatted or out of
+    # range", on the first elevated install). An EMPTY duration is "repeat indefinitely".
+    $rep = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $EveryMinutes)
+    $triggers = @($rep) + $triggers
   }
 
   $existing = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
@@ -769,10 +774,10 @@ function Register-JoggoTask {
     Say $Ctx "task '$Name' exists — updating it in place (idempotent; not a second task)"
   }
   try {
-    Register-ScheduledTask -TaskName $Name -Action $action -Trigger $trigger `
+    Register-ScheduledTask -TaskName $Name -Action $action -Trigger $triggers `
       -Principal $principal -Settings $settings -Description $Description -Force -ErrorAction Stop | Out-Null
   } catch {
-    Fail -Ctx $Ctx -Problem "registering scheduled task '$Name' failed: $($_.Exception.Message)" -Action 'run install.ps1 in an ELEVATED PowerShell (task registration as SYSTEM needs admin)' -Code 1
+    Fail -Ctx $Ctx -Problem "registering scheduled task '$Name' failed: $($_.Exception.Message)" -Action 'check that Task Scheduler is running, then re-run' -Code 1
   }
   return $true
 }
@@ -785,11 +790,12 @@ function Assert-JoggoTask {
     [hashtable]$Ctx,
     [Parameter(Mandatory=$true)][string]$Name,
     [int]$EveryMinutes = 0,
-    # The account the task must run as. SYSTEM for everything except the unelevated
-    # keepalive, which is deliberately registered as the installing user (see 95-boot).
+    # The account the task must run as: the installing user, for every joggo task (see the
+    # comment above Register-JoggoTask for why SYSTEM cannot work).
     [string]$ExpectUser = ''
   )
-  if($Ctx.DryRun){ Plan $Ctx "would read back task '$Name' and assert $(if($ExpectUser){$ExpectUser}else{'SYSTEM'}) / enabled / interval"; return $true }
+  if(-not $ExpectUser){ $ExpectUser = Get-JoggoTaskUser }
+  if($Ctx.DryRun){ Plan $Ctx "would read back task '$Name' and assert $ExpectUser / enabled / at logon / interval"; return $true }
 
   $t = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
   if(-not $t){
@@ -797,13 +803,9 @@ function Assert-JoggoTask {
   }
   $problems = New-Object System.Collections.ArrayList
   if($t.State -eq 'Disabled'){ [void]$problems.Add('the task is DISABLED') }
-  if($ExpectUser){
-    # Compare on the bare account name: the scheduler stores "user" or "DOMAIN\user".
-    if(($t.Principal.UserId -split '\\')[-1] -ne ($ExpectUser -split '\\')[-1]){
-      [void]$problems.Add("it runs as '$($t.Principal.UserId)', not '$ExpectUser'")
-    }
-  } elseif($t.Principal.UserId -notmatch '(?i)^(SYSTEM|NT AUTHORITY\\SYSTEM|S-1-5-18)$'){
-    [void]$problems.Add("it runs as '$($t.Principal.UserId)', not SYSTEM — it would not run with nobody logged on")
+  # Compare on the bare account name: the scheduler stores "user" or "DOMAIN\user".
+  if(($t.Principal.UserId -split '\\')[-1] -ne ($ExpectUser -split '\\')[-1]){
+    [void]$problems.Add("it runs as '$($t.Principal.UserId)', not '$ExpectUser' — only the installing user can see their WSL distro")
   }
   $set = $t.Settings
   if($set.DisallowStartIfOnBatteries){
@@ -813,17 +815,11 @@ function Assert-JoggoTask {
   $hasStartup = $false
   $interval = $null
   foreach($trg in @($t.Triggers)){
-    if($trg.CimClass.CimClassName -match 'BootTrigger'){ $hasStartup = $true }
-    # A user task's equivalent of "survives a reboot" is a logon trigger: it returns at that
-    # user's next logon. Only accepted when a user principal was asked for -- a SYSTEM task
-    # with a logon trigger would be a mistake, not a variant.
-    if($ExpectUser -and $trg.CimClass.CimClassName -match 'LogonTrigger'){ $hasStartup = $true }
+    # A user task's "survives a reboot" is a logon trigger: it returns at that user's logon.
+    if($trg.CimClass.CimClassName -match 'LogonTrigger'){ $hasStartup = $true }
     if($trg.Repetition -and $trg.Repetition.Interval){ $interval = $trg.Repetition.Interval }
   }
-  if(-not $hasStartup){
-    if($ExpectUser){ [void]$problems.Add('no at-logon trigger — it would not come back after a reboot') }
-    else           { [void]$problems.Add('no at-startup trigger — it would not survive a reboot') }
-  }
+  if(-not $hasStartup){ [void]$problems.Add('no at-logon trigger — it would not come back after a reboot') }
   if($EveryMinutes -gt 0){
     if(-not $interval){
       [void]$problems.Add("no repetition interval — it would run once at boot and never again (wanted every $EveryMinutes min)")
@@ -834,10 +830,9 @@ function Assert-JoggoTask {
   if($problems.Count -gt 0){
     Fail -Ctx $Ctx -Problem ("scheduled task '$Name' is registered but wrong: " + ($problems -join '; ')) -Action "unregister it and re-run: Unregister-ScheduledTask -TaskName $Name -Confirm:`$false" -Code 1
   }
-  $iv = $(if($ExpectUser){ 'at logon' } else { 'at startup' })
+  $iv = 'at logon'
   if($interval){ $iv = "$iv, repeating $interval" }
-  $acct = $(if($ExpectUser){ $t.Principal.UserId } else { 'SYSTEM' })
-  Ok $Ctx "task '$Name': registered, enabled, $acct, $iv — read back from the scheduler"
+  Ok $Ctx "task '$Name': registered, enabled, $($t.Principal.UserId), $iv — read back from the scheduler"
   return $true
 }
 

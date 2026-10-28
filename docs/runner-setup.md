@@ -124,24 +124,32 @@ EOF
 Then, from Windows, `wsl --shutdown` to apply it. Reopen the distro and confirm
 `systemctl is-system-running` returns `running` (or `degraded`).
 
-**Keep the distro alive across logout and idle.** This is the one people miss. WSL2 shuts the VM
-down shortly after its last process exits, or when you log off — which kills the runner even with
-systemd configured. **systemd alone does not keep the VM up.** A Windows scheduled task holds it
-open:
+**Keep the distro alive.** This is the one people miss. WSL powers a distro off about 30 seconds
+after the last session into it closes — measured: right after the installer exits — which kills
+the runner even with systemd configured. **systemd alone does not keep it up.** A Windows
+scheduled task holds a session open. The installer registers it (`joggo-wsl-keepalive`); by hand:
 
-🧑 OPERATOR, elevated PowerShell (adjust `-d` to your distro name):
+🧑 OPERATOR, ordinary PowerShell — no elevation needed (adjust `-d` to your distro name):
 
 ```powershell
-$action  = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument '-d Ubuntu-24.04 --exec sleep infinity'
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-$settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
-Register-ScheduledTask -TaskName 'WSL2-keepalive' -Action $action -Trigger $trigger -Principal $principal -Settings $settings
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$action    = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\conhost.exe" `
+               -Argument '--headless "C:\Windows\System32\wsl.exe" -d Ubuntu-24.04 --exec sleep infinity'
+$trigger   = New-ScheduledTaskTrigger -AtLogOn -User $me
+$principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited
+$settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+               -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
+Register-ScheduledTask -TaskName 'joggo-wsl-keepalive' -Action $action -Trigger $trigger -Principal $principal -Settings $settings
 ```
 
-It runs whether or not a user is logged on, from startup, so WSL2 and everything systemd starts
-under it stay up with nobody at the keyboard. Verify from a logged-off state after a reboot: the
-runner should still show online in GitHub.
+**It runs as you, at logon — not as SYSTEM, and not "with nobody logged on".** WSL distros are
+registered per Windows user, so a SYSTEM task cannot see yours: it starts and exits -1 within
+seconds. (An earlier version of this page showed exactly that task and promised it would work
+logged off; it never did.) The consequence is real: **the box must stay logged in** — lock the
+screen, don't log off. To get CI back after a reboot without someone signing in, turn on Windows
+auto-logon for that account; that is a security trade-off for you to make, not something the
+installer does. `conhost --headless` keeps the session from holding a console window open on the
+desktop. Verify after a reboot and logon: the runner shows online in GitHub.
 
 **Disable Windows sleep — a different thing from disabling Linux sleep.** Masking `sleep.target`
 in the distro (§2.4) does nothing if *Windows* sleeps: the VM suspends and CI stops regardless.

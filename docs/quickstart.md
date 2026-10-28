@@ -1,17 +1,16 @@
 # Quickstart — nothing to a green build
 
 **Target: Windows 10 2004+ or Windows 11 with WSL2.** That is the only supported configuration;
-there is no native-Linux or VM path. Run the commands below in PowerShell on the Windows host,
-**elevated if you can**:
+there is no native-Linux or VM path. Run the commands below in an **ordinary PowerShell** on the
+Windows host, as the user whose WSL distro the runner will live in. Elevation is needed only if
+the WSL features are not enabled yet; preflight tells you.
 
-| | Elevated | Not elevated |
-|---|---|---|
-| Runner slots, Docker, watchdog, monitor | yes | yes |
-| Keepalive (holds the WSL distro up) | SYSTEM, at startup: works with nobody logged on | as you, at logon: works while you are logged in |
-| Memory guard + 5-minute sampler | yes | no (pass `-NoGuard -NoSampler`, or the installer stops and says why) |
-
-Without some keepalive WSL powers the distro off about 30 seconds after the installer exits,
-and the runner goes with it — so there always is one; elevation decides which.
+**The runner runs while that user is logged in.** Every scheduled task the installer creates —
+the keepalive that holds the distro up, the memory guard, the 5-minute sampler — runs as you, at
+logon, because WSL distros are registered per Windows user and a SYSTEM task cannot see yours.
+So keep the box logged in (lock the screen, don't log off), or turn on Windows auto-logon if CI
+must come back after a reboot by itself. Without the keepalive, WSL powers the distro off about
+30 seconds after the installer exits and the runner goes with it.
 
 You need: virtualization enabled in firmware, 8 GB RAM (16 GB if you want two slots — see
 [How many slots](adding-a-slot.md#how-many-slots)), 30 GB free on the drive your WSL distro

@@ -348,12 +348,14 @@ if ($null -eq $isAdmin) {
   # elevation gate had been fixed to allow -- the installer runs preflight first, so the fix
   # was unreachable except with -SkipPreflight. The features themselves are proven by use in
   # the win-features check below, which is the same proof the installer's gate relies on.
-  Add-Check admin pass 'not elevated, and this install requests nothing that needs it (no guard or sampler task; the keepalive will run as you, at logon)'
+  Add-Check admin pass 'not elevated, and nothing needs it: every joggo task runs as you, and the WSL features are checked by use below'
 } else {
-  # Steps 10 (optional features), 80 (scheduled tasks) and 95 (keepalive task) all
-  # need it, and 10 is the first thing that runs.
-  Add-Check admin fail 'not elevated -- the WSL features, the scheduled tasks and the keepalive task all need admin' `
-    'Re-run from an elevated PowerShell: Start-Process powershell -Verb RunAs -ArgumentList "-File <path to install.ps1>"'
+  # Standalone. Only one thing can still need admin: turning ON the WSL optional features.
+  # The scheduled tasks all run as the installing user (SYSTEM cannot see a user's distro), and
+  # registering a task as yourself needs no elevation. So this is a warning, not a block --
+  # win-features below says whether the features are already on.
+  Add-Check admin warn 'not elevated -- fine unless the WSL features still need enabling (see win-features)' `
+    'If win-features fails, re-run elevated so step 10 can enable them. Nothing else in the install needs admin.'
 }
 
 # -- virtualization

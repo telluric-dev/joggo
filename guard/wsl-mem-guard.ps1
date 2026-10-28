@@ -68,7 +68,11 @@ New-Item -ItemType Directory -Force -Path (Split-Path $StateFile) | Out-Null
 function Log([string]$m){
   $line = "{0}  {1}" -f (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssK'), $m
   Write-Host $line
-  try { Add-Content -Path $LogFile -Value $line -Encoding utf8 } catch {}
+  # Best-effort -- the guard's actions matter more than its log -- but never silent: a log the
+  # guard cannot write is evidence lost for every incident after it.
+  try { Add-Content -Path $LogFile -Value $line -Encoding utf8 -ErrorAction Stop } catch {
+    [Console]::Error.WriteLine("wsl-mem-guard: could not write $LogFile -- $($_.Exception.Message)")
+  }
 }
 
 function Get-FreeMB {
@@ -223,7 +227,16 @@ function Read-State {
   if(Test-Path $StateFile){ try { return (Get-Content $StateFile -Raw | ConvertFrom-Json) } catch {} }
   [pscustomobject]@{ heldSince = $null; heldSlots = @(); lastRestart = $null }
 }
-function Write-State($s){ $s | ConvertTo-Json -Depth 4 | Set-Content -Path $StateFile -Encoding utf8 }
+# FATAL ON FAILURE. The state file is how the guard remembers which slots IT is holding, and
+# a guard that forgets is the six-hour hold: flags on disk, nobody tracking them, nothing ever
+# releasing them. If it cannot be written, stop -- loudly -- rather than act on a memory it
+# does not have.
+function Write-State($s){
+  try { $s | ConvertTo-Json -Depth 4 | Set-Content -Path $StateFile -Encoding utf8 -ErrorAction Stop } catch {
+    [Console]::Error.WriteLine("wsl-mem-guard: could not write its state file $StateFile -- $($_.Exception.Message). Stopping rather than lose track of held slots.")
+    exit 2
+  }
+}
 
 # ---------------------------------------------------------------- the pass
 $free   = Get-FreeMB

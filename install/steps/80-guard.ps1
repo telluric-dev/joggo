@@ -9,16 +9,18 @@
 # that produces the 5-minute trail every post-mortem in docs/memory-pressure.md
 # depends on.
 #
-# Both tasks are registered as SYSTEM, triggered at startup, and repeating — so
-# they work with nobody logged on and survive the Windows Update reboots this
-# box actually takes. -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-# because the scheduler's DEFAULT is to stop a task on battery, which would
-# silently remove the guard from a laptop at the exact moment power got
-# interesting.
+# Both tasks run as the INSTALLING USER, every N minutes and at logon -- the shape of the
+# guard this was extracted from, which has paused slots and restarted WSL in production. Not
+# SYSTEM: WSL distros are per Windows user, so a SYSTEM guard's `wsl -d <distro>` -- every
+# call it makes to pause a slot or read the job count -- finds no distro. The first elevated
+# install registered them as SYSTEM, and its keepalive (same principal) exited -1 at once.
+# -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries because the scheduler's DEFAULT is to
+# stop a task on battery, which would silently remove the guard from a laptop at the exact
+# moment power got interesting.
 #
-# And both are READ BACK afterwards: registered, enabled, SYSTEM, repeating at
-# the right interval, and actually executed with result 0. Register-ScheduledTask
-# returning without throwing proves none of that.
+# And both are READ BACK afterwards: registered, enabled, the right user, repeating at the
+# right interval, and actually executed with result 0. Register-ScheduledTask returning
+# without throwing proves none of that.
 
 Step-Header $Ctx '80-guard'
 
@@ -36,6 +38,35 @@ if(-not $ps -and -not $Ctx.DryRun){
 }
 
 $bin = $Ctx.BinDir
+
+# CAN THE TASKS WRITE THEIR OWN FILES? They run as you, and the data directory may hold files
+# created by someone else: an earlier version of joggo ran these tasks as SYSTEM, and anything
+# an ELEVATED process creates is owned by Administrators. A Limited user may create new files
+# in C:\ProgramData\joggo but may not modify ones it does not own -- so the sampler ran, could
+# not append, and the trail silently stopped. Checked before registering anything: elevated,
+# fix it (grant this user Modify on the directory tree); not elevated, stop and name the fix.
+if(-not $Ctx.DryRun -and (Test-Path $Ctx.DataDir)){
+  $who = Get-JoggoTaskUser
+  $locked = @(Get-ChildItem $Ctx.DataDir -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object {
+    $ok = $true
+    try { $fs = [IO.File]::Open($_.FullName, 'Open', 'ReadWrite', 'ReadWrite'); $fs.Close() } catch { $ok = $false }
+    -not $ok
+  })
+  if($locked.Count -gt 0){
+    $names = ($locked | ForEach-Object { $_.FullName.Substring($Ctx.DataDir.Length).TrimStart('\') }) -join ', '
+    $fix = 'icacls "{0}" /grant "{1}:(OI)(CI)M" /T' -f $Ctx.DataDir, $who
+    if(Test-Admin){
+      Say $Ctx "granting $who write access to $($Ctx.DataDir): $($locked.Count) file(s) there are owned by another account ($names)"
+      & icacls.exe $Ctx.DataDir /grant ("{0}:(OI)(CI)M" -f $who) /T /Q | Out-Null
+      $still = @($locked | Where-Object { try { $f=[IO.File]::Open($_.FullName,'Open','ReadWrite','ReadWrite'); $f.Close(); $false } catch { $true } })
+      if($still.Count -gt 0){ Fail -Ctx $Ctx -Problem "still cannot write $($still.Count) file(s) in $($Ctx.DataDir) after granting access" -Action "run by hand, elevated: $fix" -Code 1 }
+      Ok $Ctx "$who can write every file in $($Ctx.DataDir)"
+    } else {
+      Fail -Ctx $Ctx -Problem "$($locked.Count) file(s) in $($Ctx.DataDir) belong to another account, and the guard/sampler (running as $who) could not write them: $names" `
+        -Action "run once in an ELEVATED PowerShell, then re-run this installer:  $fix   (they are the old memory trail; deleting them works too)" -Code 1
+    }
+  }
+}
 
 # The task must not depend on where the repo was cloned. A task pointed at
 # C:\Users\someone\Downloads\joggo is a task that breaks the day that directory
@@ -107,7 +138,7 @@ if($Cfg.guard){
       Add-Result $Ctx 'guard.run' 'warn' "task scheduled; its proving run was deferred because free memory ($free MB) is below the warn line" 'Get-ScheduledTaskInfo -TaskName joggo-mem-guard after the next interval'
     }
   }
-  Add-Result $Ctx 'guard' 'pass' "joggo-mem-guard every $($Cfg.guardIntervalMin) min as SYSTEM, warn $($Cfg.guardWarnMB) / critical $($Cfg.guardCriticalMB)" ''
+  Add-Result $Ctx 'guard' 'pass' "joggo-mem-guard every $($Cfg.guardIntervalMin) min as the installing user, warn $($Cfg.guardWarnMB) / critical $($Cfg.guardCriticalMB)" ''
 } else {
   Skip $Ctx 'guard disabled (-NoGuard)'
   Add-Result $Ctx 'guard' 'warn' 'guard disabled' ''
@@ -152,7 +183,7 @@ if($Cfg.sampler){
     Ok $Ctx "mem-watch.csv grew from $before to $after rows — the sampler wrote a real sample, not just exited 0"
     Say $Ctx "trail: $csv ; snapshots: $(Join-Path $Ctx.DataDir 'snapshots')"
   }
-  Add-Result $Ctx 'sampler' 'pass' 'joggo-mem-watch every 5 min as SYSTEM, verified by a new CSV row' ''
+  Add-Result $Ctx 'sampler' 'pass' 'joggo-mem-watch every 5 min as the installing user, verified by a new CSV row' ''
 } else {
   Skip $Ctx 'sampler disabled (-NoSampler)'
   Add-Result $Ctx 'sampler' 'warn' 'sampler disabled' ''

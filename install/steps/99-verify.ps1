@@ -89,7 +89,7 @@ if($Ctx.DryRun){
   Plan $Ctx '  slot units enabled; and ONLINE proved by "Listening for Jobs" in the listener log, waiting up to 180s'
   Plan $Ctx '  GitHub asked directly as a second instrument when gh is authenticated'
   if($Cfg.filterAaaa){ Plan $Ctx '  the AAAA filter, by differential test with the upstream resolver as positive control' }
-  Plan $Ctx '  the scheduled tasks: registered, enabled, SYSTEM, repeating, and with a successful run on record'
+  Plan $Ctx '  the scheduled tasks: registered, enabled, running as you, repeating, and with a successful run on record'
   Plan $Ctx 'then print the workflow YAML to paste into a consuming repo'
   Show-NextAction
   Add-Result $Ctx 'verify' 'pass' 'dry run' ''
@@ -131,15 +131,12 @@ foreach($w in $wanted){
   $t = Get-ScheduledTask -TaskName $w.n -ErrorAction SilentlyContinue
   if(-not $t){ V-Fail ("scheduled task '" + $w.n + "' does not exist"); continue }
   if($t.State -eq 'Disabled'){ V-Fail ("scheduled task '" + $w.n + "' is DISABLED"); continue }
-  if($t.Principal.UserId -notmatch '(?i)(SYSTEM|S-1-5-18)'){
-    # The keepalive is allowed to be a user task: that is what step 95 registers when the
-    # install is not elevated, on purpose, and it already warned. Say what it costs and move
-    # on to the checks that still apply. The guard and sampler have no such variant.
-    if($w.n -eq 'joggo-wsl-keepalive'){
-      V-Warn ("'" + $w.n + "' runs as " + $t.Principal.UserId + " at logon (unelevated install): CI is up while that user is logged in, not with nobody logged on. Re-run elevated for the SYSTEM variant.")
-    } else {
-      V-Fail ("scheduled task '" + $w.n + "' runs as " + $t.Principal.UserId + ", not SYSTEM — it would not run with nobody logged on"); continue
-    }
+  # Every joggo task runs as the installing user: only that account can see its WSL distro
+  # (distros are per Windows user; a SYSTEM task finds none -- the first elevated install's
+  # SYSTEM keepalive exited -1 within seconds). A task running as anyone else is wrong.
+  $me = ([Security.Principal.WindowsIdentity]::GetCurrent().Name -split '\\')[-1]
+  if(($t.Principal.UserId -split '\\')[-1] -ne $me){
+    V-Fail ("scheduled task '" + $w.n + "' runs as " + $t.Principal.UserId + ", not " + $me + " — it cannot see " + $me + "'s WSL distro"); continue
   }
   $info = Get-ScheduledTaskInfo -TaskName $w.n -ErrorAction SilentlyContinue
   if($null -eq $info){ V-Fail ("could not determine whether '" + $w.n + "' has ever run"); continue }

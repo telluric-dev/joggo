@@ -214,7 +214,9 @@ function Invoke-JoggoPreflight {
     if($Cfg.slots) { $pfArgs['Slots']  = [int]$Cfg.slots }
     # Keep preflight's admin check in step with the elevation gate below: nothing
     # Windows-side requested means nothing that needs elevation.
-    if(-not $Cfg.guard -and -not $Cfg.sampler){ $pfArgs['NoAdminNeeded'] = $true }
+    # Every task runs as the user now, so only the WSL features can need admin -- and preflight
+    # proves those by use in its own win-features check. The installer's gate is the authority.
+    $pfArgs['NoAdminNeeded'] = $true
   }
   if($PfToken){ $pfArgs['Token'] = $PfToken }
 
@@ -435,9 +437,9 @@ Write-JLine $ctx '==============================================================
 #
 # Each reason names the flag that removes it, so the message is also the way out.
 $adminReasons = New-Object System.Collections.Generic.List[string]
-if($cfg.guard -or $cfg.sampler){
-  $adminReasons.Add('registering the SYSTEM scheduled tasks for the memory guard and the 5-minute sampler   (-NoGuard -NoSampler)')
-}
+# The guard and sampler are NOT reasons any more: every joggo task now runs as the installing
+# user (SYSTEM cannot see a user's WSL distro), and registering a task as yourself needs no
+# admin. The only thing left that can need elevation is enabling the WSL features, below.
 # The keepalive is NOT a reason any more: unelevated, step 95 registers it as the installing
 # user at logon instead of SYSTEM at startup -- weaker (it needs you logged in) but real, where
 # the alternative was a distro WSL powers off 30 seconds after the installer exits.

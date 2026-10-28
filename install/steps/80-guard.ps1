@@ -116,7 +116,12 @@ if($Cfg.guard){
 # ---------------------------------------------------------------- the sampler
 if($Cfg.sampler){
   $watchPath = Install-GuardScript -Rel 'guard\mem-watch.ps1'
-  $wArgs = ('-NoProfile -ExecutionPolicy Bypass -File "{0}" -Quiet' -f $watchPath)
+  # -Distro, in step with the guard above. mem-watch.ps1 used to hardcode 'Ubuntu' at
+  # its one probe site, so there was no parameter to pass and nothing to notice: a box
+  # whose distro is named anything else got a sampler that wrote Windows-side numbers
+  # and left every VM column empty — a trail that reads like a working sampler on a
+  # machine with no WSL memory in it. Both halves are fixed; keep them in step.
+  $wArgs = ('-NoProfile -ExecutionPolicy Bypass -File "{0}" -Quiet -Distro "{1}"' -f $watchPath, $Cfg.distro)
 
   # FIVE MINUTES, fixed, not guardIntervalMin. The trail's value is its
   # resolution: every finding in docs/memory-pressure.md — the terminal emulator

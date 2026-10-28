@@ -182,6 +182,17 @@ worse.
 
 If you are an AI agent asked to run or repair this box, this section is for you.
 
+**There is a better version of this, specific to your box.** The installer renders
+[`agent/SUPERVISOR.md`](agent/SUPERVISOR.md) to `C:\ProgramData\joggo\SUPERVISOR.md` with
+the real distro name, paths, slot count and thresholds substituted — so it says
+`-d Ubuntu-24.04` rather than `-d <your distro>`, and `warn 2450 MB` rather than
+`15% of RAM`. Paste that file as the opening prompt of a session that will supervise the
+runner, or point the agent at it: it carries the standing duties, these invariants, the
+command-safety split and the diagnosis tests, already resolved for one machine.
+
+Rendered by default; `-NoAgentSupervisor` skips it. What follows is the generic form —
+what you get reading the repo rather than running on a box.
+
 ### Invariants — do not violate these
 
 | Invariant | Why |

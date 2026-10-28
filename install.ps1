@@ -71,6 +71,8 @@ param(
   [switch]$NoWatchdog,
   [switch]$Monitor,
   [switch]$NoMonitor,
+  [switch]$AgentSupervisor,
+  [switch]$NoAgentSupervisor,
   [switch]$StartOnBoot,
   [switch]$NoStartOnBoot,
   [switch]$Tailscale,
@@ -128,6 +130,8 @@ CONFIG (defaults scale with RAM; see install/CONTRACT.md for the schema)
   -Sampler | -NoSampler  guard/mem-watch.ps1, the 5-minute trail. On by default.
   -Watchdog | -NoWatchdog        the wedge detector. On by default.
   -Monitor | -NoMonitor          the WPF monitor. OFF by default (desktop app).
+  -AgentSupervisor | -No...      render a supervisor brief for an agent session,
+                                 specific to this box. ON by default; it is one file.
   -StartOnBoot | -NoStartOnBoot  keepalive task + enabled units. On by default.
   -Tailscale | -NoTailscale      optional, remote management only. Off by default.
   -FilterAaaa            install network/filter-aaaa.conf: strips AAAA for the
@@ -343,6 +347,20 @@ if(-not $useWizard -and -not $scopeGiven){
   Fail -Ctx $ctx -Problem '-NonInteractive without a scope' -Action 'pass -Scope repo -Repo owner/name, or -Scope org -Org yourorg' -Code 2
 }
 
+# BUT VALIDATE THE FLAGS BEFORE PREFLIGHT, when they are all we are getting.
+#
+# Bad usage is bad usage whatever the state of the machine. Without this,
+# `-Repo notaslug` exited 3 "preflight failed" — so the user went and freed disk
+# space, re-ran, and got the same wrong answer, because the real problem was in
+# their argument the whole time. Exit 2 means "fix your command line"; exit 3
+# means "fix your box", and conflating them sends people to the wrong place.
+#
+# Only on the non-wizard path: before the wizard runs, a config is *expected* to
+# be incomplete, and validating it there would reject every interactive install.
+if(-not $useWizard){
+  $cfg = Test-JoggoConfig -Ctx $ctx -Cfg $cfg
+}
+
 # PREFLIGHT BEFORE THE WIZARD, not after.
 #
 # Two reasons. It checks everything the whole run needs, so nobody should answer
@@ -382,7 +400,7 @@ if(-not $regToken -and $ctx.DryRun){
 
 $steps = @(
   '10-wsl-feature','20-distro','30-runner-user','40-docker','45-dns-aaaa',
-  '50-dind-image','60-runner','70-slots','80-guard','90-watchdog','95-boot','99-verify'
+  '50-dind-image','60-runner','70-slots','80-guard','90-watchdog','95-boot','97-agent','99-verify'
 )
 $ctx.StepTotal = $steps.Count
 

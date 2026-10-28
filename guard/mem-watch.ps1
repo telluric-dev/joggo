@@ -38,6 +38,14 @@
 
 [CmdletBinding()]
 param(
+  # The distro to probe. This was hardcoded to 'Ubuntu' at the single call site below,
+  # which silently ignored whatever distro was actually configured. The failure was
+  # quiet rather than loud: wsl.exe writes "there is no distribution with the supplied
+  # name" to stderr and exits non-zero, the sampler's probe returned nothing, and the
+  # VM columns in the trail simply came back empty — a CSV that looks like a working
+  # sampler recording a box with no WSL memory in it. The installer passes the resolved
+  # name; the default matches the guard's so the two always agree by default.
+  [string]$Distro   = "Ubuntu",
   [int]$FreeTripMB  = 3500,
   [int]$DropTripMB  = 1500,
   [int]$CooldownMin = 20,
@@ -254,7 +262,7 @@ if($tripReason -ne '' -and ($cooled -or $SnapshotNow)){
     try {
       $psi = New-Object System.Diagnostics.ProcessStartInfo
       $psi.FileName  = 'wsl.exe'
-      $psi.Arguments = '-d Ubuntu -u root -- sh -c "' + $cmd + '"'
+      $psi.Arguments = '-d ' + $Distro + ' -u root -- sh -c "' + $cmd + '"'
       $psi.RedirectStandardOutput = $true
       $psi.RedirectStandardError  = $true
       $psi.UseShellExecute = $false

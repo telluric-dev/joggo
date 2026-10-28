@@ -173,6 +173,12 @@ function Get-JoggoDefaults {
     sampler           = $true
     watchdog          = $true
     monitor           = $false
+    # The supervisor brief for an agent session. Defaults ON because it costs one
+    # rendered markdown file and nothing else — and the point of rendering it rather
+    # than shipping it is that it carries THIS box's distro name, paths and
+    # thresholds. A generic brief makes an agent guess, which is the thing the brief
+    # exists to prevent.
+    agentSupervisor   = $true
     startOnBoot       = $true
     tailscale         = $false
     filterAaaa        = $false
@@ -183,7 +189,7 @@ function Get-JoggoDefaults {
 $script:JoggoKeys = @(
   'scope','org','repo','runnerName','labels','slots','distro','runnerUser',
   'guard','guardWarnMB','guardCriticalMB','guardIntervalMin','sampler',
-  'watchdog','monitor','startOnBoot','tailscale','filterAaaa','ramMB'
+  'watchdog','monitor','agentSupervisor','startOnBoot','tailscale','filterAaaa','ramMB'
 )
 function Get-JoggoKeys { $script:JoggoKeys }
 
@@ -265,7 +271,7 @@ function Merge-JoggoFlags {
   }
   $pairs = @(
     @('Guard','NoGuard','guard'), @('Sampler','NoSampler','sampler'),
-    @('Watchdog','NoWatchdog','watchdog'), @('Monitor','NoMonitor','monitor'),
+    @('Watchdog','NoWatchdog','watchdog'), @('Monitor','NoMonitor','monitor'), @('AgentSupervisor','NoAgentSupervisor','agentSupervisor'),
     @('StartOnBoot','NoStartOnBoot','startOnBoot'), @('Tailscale','NoTailscale','tailscale'),
     @('FilterAaaa','NoFilterAaaa','filterAaaa')
   )
@@ -334,6 +340,7 @@ function Invoke-JoggoWizard {
   $Cfg.watchdog    = AskBool 'install the wedge watchdog'          $Cfg.watchdog
   $Cfg.startOnBoot = AskBool 'start on boot (keepalive task + enabled units)' $Cfg.startOnBoot
   $Cfg.monitor     = AskBool 'install the WPF monitor (desktop app, optional)' $Cfg.monitor
+  $Cfg.agentSupervisor = AskBool 'render a supervisor brief for an agent session' $Cfg.agentSupervisor
   $Cfg.tailscale   = AskBool 'configure Tailscale for remote management (optional)' $Cfg.tailscale
 
   # OFFERED ONLY WHEN PREFLIGHT ACTUALLY RAISED THE WARNING. It changes name

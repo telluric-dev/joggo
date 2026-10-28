@@ -111,33 +111,68 @@ function Invoke-Wsl([string]$cmd, [int]$TimeoutSec = 25){
 
   $p = New-Object System.Diagnostics.Process
   $p.StartInfo = $psi
-  # Async readers with a StringBuilder: reading both streams synchronously can deadlock
-  # when one fills its pipe buffer while we are blocked on the other.
-  $sbO = New-Object System.Text.StringBuilder
-  $sbE = New-Object System.Text.StringBuilder
-  $hO = Register-ObjectEvent -InputObject $p -EventName OutputDataReceived -Action { if($null -ne $EventArgs.Data){ [void]$Event.MessageData.AppendLine($EventArgs.Data) } } -MessageData $sbO
-  $hE = Register-ObjectEvent -InputObject $p -EventName ErrorDataReceived  -Action { if($null -ne $EventArgs.Data){ [void]$Event.MessageData.AppendLine($EventArgs.Data) } } -MessageData $sbE
+  # Both streams must be read concurrently, or a full pipe buffer on one deadlocks the
+  # wait on the other. ReadToEndAsync does that: the tasks start BEFORE the wait and are
+  # collected after it, so nothing races the process exit.
+  #
+  # WHAT THIS REPLACED, AND WHY. Measured on the box this came from, 2026-10-28:
+  #
+  #   Register-ObjectEvent + BeginOutputReadLine + Start-Sleep 120
+  #     seq 1 1    exit0=True   captured 1    OK
+  #     seq 1 3    exit0=True   captured 3    OK
+  #     seq 1 25   exit0=True   captured 2    LOST 23 of 25
+  #     seq 1 80   exit0=True   captured 3    LOST 77 of 80
+  #
+  # Those event handlers are serviced by the PowerShell event loop, which is not pumping
+  # while this function sits in WaitForExit — so queued lines arrive late or never, and a
+  # fixed sleep cannot bound a race. The comment it replaced said "let the async handlers
+  # drain the last lines", which conceded the race in writing and then slept on it.
+  #
+  # The failure shape is the one this project is largely a catalogue of: EXIT CODE 0,
+  # EVERY TIME. The command succeeded, the output vanished, nothing complained. Any
+  # caller parsing more than about three lines was reading a truncated answer and had no
+  # way to know. See Get-RunningJobs for what that cost.
+  $tOut = $null; $tErr = $null
   try {
     [void]$p.Start()
-    $p.BeginOutputReadLine(); $p.BeginErrorReadLine()
+    $tOut = $p.StandardOutput.ReadToEndAsync()
+    $tErr = $p.StandardError.ReadToEndAsync()
     if(-not $p.WaitForExit($TimeoutSec * 1000)){
       try { $p.Kill() } catch {}
       return [pscustomobject]@{ ok=$false; out=''; err="timed out after ${TimeoutSec}s" }
     }
-    Start-Sleep -Milliseconds 120   # let the async handlers drain the last lines
-    [pscustomobject]@{ ok = ($p.ExitCode -eq 0); out = $sbO.ToString().Trim(); err = $sbE.ToString().Trim() }
+    # Bounded. A reader still incomplete after the process is gone is a bug to surface,
+    # not something to block on indefinitely.
+    [void]$tOut.Wait(5000); [void]$tErr.Wait(5000)
+    if(-not $tOut.IsCompleted){
+      return [pscustomobject]@{ ok=$false; out=''; err='stdout reader did not complete — treat as unknown, not empty' }
+    }
+    $e = if($tErr.IsCompleted){ $tErr.Result } else { '' }
+    [pscustomobject]@{ ok = ($p.ExitCode -eq 0); out = $tOut.Result.Trim(); err = $e.Trim() }
   } finally {
-    Unregister-Event -SourceIdentifier $hO.Name -ErrorAction SilentlyContinue
-    Unregister-Event -SourceIdentifier $hE.Name -ErrorAction SilentlyContinue
     $p.Dispose()
   }
 }
 
 function Get-RunningJobs {
   # grep -c with the bracket trick so the grep itself is not counted.
+  #
+  # RETURNS -1 FOR "I COULD NOT TELL", AND THE CALLER MUST TREAT THAT AS "JOBS MAY BE
+  # RUNNING". Getting this wrong is expensive: 0 means idle, idle is what makes a slot
+  # eligible for the restart branch, and a restart mid-job loses somebody's build.
+  #
+  # The old guard was `if(-not $r.ok -and -not $r.out){ return -1 }` — unknown only when
+  # the command FAILED *and* produced nothing. So a command that SUCCEEDED with an empty
+  # capture fell through, TryParse left $n at 0, and an unreadable answer became "idle".
+  # With the output-capture bug this file used to carry (see Invoke-Wsl), that was not
+  # hypothetical: exit 0 with everything dropped was a reachable path straight to a
+  # restart. Both halves are fixed; this half stays correct regardless of the other.
   $r = Invoke-Wsl "ps -eo cmd | grep -ac '[R]unner.Worker' || true" 15
-  if(-not $r.ok -and -not $r.out){ return -1 }   # -1 = unknown, treat as "cannot confirm idle"
-  $n = 0; [void][int]::TryParse(($r.out -split "`n")[0].Trim(), [ref]$n)
+  $first = if([string]::IsNullOrWhiteSpace($r.out)){ '' } else { ($r.out -split "`n")[0].Trim() }
+  if(-not $r.ok){ return -1 }                         # command failed: unknown
+  if([string]::IsNullOrWhiteSpace($first)){ return -1 }  # succeeded but said nothing: unknown
+  $n = 0
+  if(-not [int]::TryParse($first, [ref]$n)){ return -1 } # said something unparseable: unknown
   $n
 }
 

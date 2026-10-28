@@ -132,14 +132,21 @@ foreach($w in $wanted){
   if(-not $t){ V-Fail ("scheduled task '" + $w.n + "' does not exist"); continue }
   if($t.State -eq 'Disabled'){ V-Fail ("scheduled task '" + $w.n + "' is DISABLED"); continue }
   if($t.Principal.UserId -notmatch '(?i)(SYSTEM|S-1-5-18)'){
-    V-Fail ("scheduled task '" + $w.n + "' runs as " + $t.Principal.UserId + ", not SYSTEM — it would not run with nobody logged on"); continue
+    # The keepalive is allowed to be a user task: that is what step 95 registers when the
+    # install is not elevated, on purpose, and it already warned. Say what it costs and move
+    # on to the checks that still apply. The guard and sampler have no such variant.
+    if($w.n -eq 'joggo-wsl-keepalive'){
+      V-Warn ("'" + $w.n + "' runs as " + $t.Principal.UserId + " at logon (unelevated install): CI is up while that user is logged in, not with nobody logged on. Re-run elevated for the SYSTEM variant.")
+    } else {
+      V-Fail ("scheduled task '" + $w.n + "' runs as " + $t.Principal.UserId + ", not SYSTEM — it would not run with nobody logged on"); continue
+    }
   }
   $info = Get-ScheduledTaskInfo -TaskName $w.n -ErrorAction SilentlyContinue
   if($null -eq $info){ V-Fail ("could not determine whether '" + $w.n + "' has ever run"); continue }
 
   if(-not $w.mustHaveRun){
     # The keepalive is correct when it is RUNNING, not when it has completed.
-    if($t.State -eq 'Running'){ V-Ok ("'" + $w.n + "' is Running as SYSTEM — the correct steady state for a task that holds the VM open") }
+    if($t.State -eq 'Running'){ V-Ok ("'" + $w.n + "' is Running as " + $t.Principal.UserId + " — the correct steady state for a task that holds the VM open") }
     else { V-Fail ("'" + $w.n + "' is '" + $t.State + "'; it must be Running or the WSL2 VM will shut down when you log off") }
     continue
   }

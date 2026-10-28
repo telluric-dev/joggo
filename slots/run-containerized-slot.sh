@@ -68,11 +68,18 @@ DIND_C="joggo-dind-$SLOT"
 # and so slot 1 and slot 2 can never swap (they did, between 2026-10-05 and 10-06, which is why
 # the same fault looked like it moved between slots).
 #
-# 10.201.x is outside Docker's default pool and free on this box - the host sits on
-# 172.24.224.0/20, docker0 on 172.17, and Tailscale routes only 100.100.100.100. Picking inside
-# the default pool would risk a future auto-created network overlapping it.
-SLOT_SUBNET="10.201.$SLOT.0/24"
-SLOT_GATEWAY="10.201.$SLOT.1"
+# Outside Docker's default pool, so an auto-created network can never land on it.
+#
+# CONFIGURABLE, AND NOT 10.201. All WSL2 distros share ONE network stack -- one kernel, one
+# route table, one set of iptables chains. This was hardcoded to 10.201.<slot>, the range the
+# runner it was extracted from uses, so installing joggo next to that runner put two bridges on
+# each subnet; replies went to whichever route came first and the slots had no outbound traffic
+# at all -- "Resource temporarily unavailable" resolving github.com, offline on GitHub, nothing
+# in the slot's own logs pointing at the network. Default is now 10.211; to move it, set
+# SLOT_NET_BASE=10.x in /etc/default/joggo-slot (the unit reads it) and restart the slots.
+SLOT_NET_BASE="${SLOT_NET_BASE:-10.211}"
+SLOT_SUBNET="$SLOT_NET_BASE.$SLOT.0/24"
+SLOT_GATEWAY="$SLOT_NET_BASE.$SLOT.1"
 WORK_VOL="joggo-slot-${SLOT}-work"
 ROOT_VOL="joggo-slot-${SLOT}-root"
 # _diag is the ONE deliberate exception to "nothing survives a job boundary". It is
@@ -334,6 +341,12 @@ main() {
     # Create only if absent: reclaim_stale has already removed one carrying the wrong subnet, so
     # anything surviving to here is correct and reusable.
     if ! docker network inspect "$NET" >/dev/null 2>&1; then
+        # REFUSE A SUBNET SOMETHING ELSE ALREADY ROUTES. Docker will happily create a second
+        # bridge on a range another daemon in this WSL VM already uses (each distro runs its own
+        # dockerd, but they share the route table), and the result is not an error -- it is a
+        # slot with no network that starts, registers, and never comes online. Fail by name.
+        clash="$(ip -4 route show "$SLOT_SUBNET" 2>/dev/null | head -1)"
+        [ -z "$clash" ] || die "subnet $SLOT_SUBNET is already routed on this machine ($clash). Another runner or docker daemon in this WSL VM uses it -- all WSL2 distros share one network stack. Set SLOT_NET_BASE=10.<free> in /etc/default/joggo-slot and restart the slot."
         docker network create --subnet "$SLOT_SUBNET" --gateway "$SLOT_GATEWAY" "$NET" >/dev/null 2>&1 \
             || die "network create failed ($NET $SLOT_SUBNET)"
         log "created $NET on $SLOT_SUBNET"

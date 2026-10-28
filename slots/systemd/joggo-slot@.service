@@ -51,6 +51,9 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
+# Optional overrides, e.g. SLOT_NET_BASE=10.212 when 10.211 collides with something else in
+# this WSL VM. The leading "-" makes the file optional.
+EnvironmentFile=-/etc/default/joggo-slot
 ExecStart=/usr/local/sbin/run-containerized-slot.sh %i
 # Normal turnover is: take one job, exit 0, restart. Restarts are therefore CONSTANT and
 # EXPECTED, and RestartSec is paid before every single job.

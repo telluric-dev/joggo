@@ -214,7 +214,7 @@ function Invoke-JoggoPreflight {
     if($Cfg.slots) { $pfArgs['Slots']  = [int]$Cfg.slots }
     # Keep preflight's admin check in step with the elevation gate below: nothing
     # Windows-side requested means nothing that needs elevation.
-    if(-not $Cfg.guard -and -not $Cfg.sampler -and -not $Cfg.startOnBoot){ $pfArgs['NoAdminNeeded'] = $true }
+    if(-not $Cfg.guard -and -not $Cfg.sampler){ $pfArgs['NoAdminNeeded'] = $true }
   }
   if($PfToken){ $pfArgs['Token'] = $PfToken }
 
@@ -438,9 +438,9 @@ $adminReasons = New-Object System.Collections.Generic.List[string]
 if($cfg.guard -or $cfg.sampler){
   $adminReasons.Add('registering the SYSTEM scheduled tasks for the memory guard and the 5-minute sampler   (-NoGuard -NoSampler)')
 }
-if($cfg.startOnBoot){
-  $adminReasons.Add('registering the keepalive task that starts the distro at boot   (-NoStartOnBoot)')
-}
+# The keepalive is NOT a reason any more: unelevated, step 95 registers it as the installing
+# user at logon instead of SYSTEM at startup -- weaker (it needs you logged in) but real, where
+# the alternative was a distro WSL powers off 30 seconds after the installer exits.
 
 # The features step QUERIES with Get-WindowsOptionalFeature -Online, and that call
 # is itself elevated -- so when the features are already on it is the CHECK, not

@@ -348,7 +348,7 @@ if ($null -eq $isAdmin) {
   # elevation gate had been fixed to allow -- the installer runs preflight first, so the fix
   # was unreachable except with -SkipPreflight. The features themselves are proven by use in
   # the win-features check below, which is the same proof the installer's gate relies on.
-  Add-Check admin pass 'not elevated, and this install requests nothing that needs it (no guard, sampler or keepalive task)'
+  Add-Check admin pass 'not elevated, and this install requests nothing that needs it (no guard or sampler task; the keepalive will run as you, at logon)'
 } else {
   # Steps 10 (optional features), 80 (scheduled tasks) and 95 (keepalive task) all
   # need it, and 10 is the first thing that runs.

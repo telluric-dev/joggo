@@ -44,6 +44,11 @@ warn() { printf 'WARN: %s\n' "$*" >&2; }
 LOGS=/var/log/joggo
 mkdir -p "$LOGS" 2>/dev/null || true
 
+# The slots' subnet base, as the launcher will see it: /etc/default/joggo-slot if it sets
+# SLOT_NET_BASE, else the launcher's own default. One reader, so the AAAA filter's listen
+# addresses and verify's gateway probe cannot drift from what the slots actually use.
+slot_net_base() { ( SLOT_NET_BASE=""; . /etc/default/joggo-slot 2>/dev/null; printf '%s' "${SLOT_NET_BASE:-10.211}" ); }
+
 # Every failure names the problem AND the action. There is no bare-die path.
 die() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -521,12 +526,21 @@ phase_dns_aaaa() {
            "apt-get install -y dnsutils, then re-run. The AAAA filter is not installed without a way to verify it."
 
   mkdir -p /etc/dnsmasq.d
-  install -m 0644 "$STAGE/network/filter-aaaa.conf" /etc/dnsmasq.d/joggo-filter-aaaa.conf \
+  # listen-address is rendered from the real gateways (subnet base + slot count), so the filter
+  # listens where the slots actually are rather than on a range written into the file.
+  local base gws="" i
+  base="$(slot_net_base)"
+  for i in $(seq 1 "${CFG_slots:-1}"); do gws="${gws:+$gws,}$base.$i.1"; done
+  sed "s/^listen-address=.*/listen-address=$gws/" "$STAGE/network/filter-aaaa.conf" > "$LOGS/filter-aaaa.rendered" \
+    || die "could not render the AAAA filter" "check free space: df -h /"
+  install -m 0644 "$LOGS/filter-aaaa.rendered" /etc/dnsmasq.d/joggo-filter-aaaa.conf \
     || die "could not write /etc/dnsmasq.d/joggo-filter-aaaa.conf" "check free space: df -h /"
-  cmp -s "$STAGE/network/filter-aaaa.conf" /etc/dnsmasq.d/joggo-filter-aaaa.conf \
-    || undetermined "whether the drop-in was written intact (it differs from the source)" \
-                    "diff $STAGE/network/filter-aaaa.conf /etc/dnsmasq.d/joggo-filter-aaaa.conf"
-  ok "/etc/dnsmasq.d/joggo-filter-aaaa.conf installed (byte-identical to the source)"
+  cmp -s "$LOGS/filter-aaaa.rendered" /etc/dnsmasq.d/joggo-filter-aaaa.conf \
+    || undetermined "whether the drop-in was written intact (it differs from what was rendered)" \
+                    "diff $LOGS/filter-aaaa.rendered /etc/dnsmasq.d/joggo-filter-aaaa.conf"
+  grep -qx "listen-address=$gws" /etc/dnsmasq.d/joggo-filter-aaaa.conf \
+    || undetermined "whether listen-address was rendered (expected $gws)" "grep listen-address /etc/dnsmasq.d/joggo-filter-aaaa.conf"
+  ok "/etc/dnsmasq.d/joggo-filter-aaaa.conf installed, listening on the slot gateways $gws"
 
   # --test checks syntax AND that this build actually supports filter-AAAA. A
   # dnsmasq without it parses the file and silently does nothing, which is the
@@ -759,6 +773,9 @@ retire_slot() {
     return 0
   fi
   systemctl disable --now "joggo-slot@${k}.service" >/dev/null 2>&1 || true
+  # Stopping a slot kills its container, so the unit's last exit is non-zero and systemd keeps
+  # it in "failed". A retired slot must not read as a broken one in systemctl --failed.
+  systemctl reset-failed "joggo-slot@${k}.service" >/dev/null 2>&1 || true
   [ "$(systemctl is-enabled "joggo-slot@${k}.service" 2>/dev/null)" != "enabled" ] \
     || undetermined "whether joggo-slot@${k} was disabled" "systemctl disable --now joggo-slot@${k}"
   if [ -r "$root/.credentials" ]; then
@@ -1084,25 +1101,38 @@ phase_verify() {
   #
   # 'enabled' and 'active' both say nothing about whether GitHub has it. The
   # local proof is the listener's own log line, which it writes only after it
-  # has authenticated and connected. Waiting for it also covers the first cold
-  # start (p50 44s, p90 69s, max 139s measured over 75 starts).
+  # has authenticated and connected.
+  #
+  # ONE DEADLINE FOR ALL SLOTS, 420s, not 180s each. The 180s came from 75 warm starts on the
+  # original box (max 139s). A FIRST start on a fresh install does more -- populating each
+  # slot's runner root, starting dind, seeding buildkit -- and measured 3m41s for both slots,
+  # starting together. With 180s per slot, slot 1 timed out 20s before it came up, then slot 2
+  # passed because its 180s started later: a false FAIL, and a pass that depended on order.
+  #
+  # AND ONLY LOGS FROM THIS START COUNT. This used to accept any Runner_*.log containing the
+  # line -- including one left by an earlier start -- so a re-install whose runner was dead
+  # could pass on yesterday's log. A log counts only if it was written after the unit last
+  # became active.
+  local deadline=$(( $(date +%s) + 420 ))
   n=1
   while [ "$n" -le "${CFG_slots:-1}" ]; do
-    local diag="/var/log/joggo-slots/${n}/_diag" waited=0 found=''
-    while [ "$waited" -lt 180 ]; do
+    local diag="/var/log/joggo-slots/${n}/_diag" found='' since t0
+    since="$(systemctl show "joggo-slot@${n}.service" -p ActiveEnterTimestamp --value 2>/dev/null)"
+    t0="$(date -d "$since" +%s 2>/dev/null || echo 0)"
+    while :; do
       if [ -d "$diag" ]; then
-        found="$(grep -l 'Listening for Jobs' "$diag"/Runner_*.log 2>/dev/null | tail -1)"
+        found="$(find "$diag" -maxdepth 1 -name 'Runner_*.log' -newermt "@$t0" -exec grep -l 'Listening for Jobs' {} + 2>/dev/null | sort | tail -1)"
         [ -n "$found" ] && break
       fi
+      [ "$(date +%s)" -ge "$deadline" ] && break
       sleep 5
-      waited=$((waited+5))
     done
     if [ -n "$found" ]; then
-      v_ok "slot $n listener reported 'Listening for Jobs' in $(basename "$found") after ${waited}s — it authenticated and connected"
+      v_ok "slot $n listener reported 'Listening for Jobs' in $(basename "$found"), $(( $(stat -c %Y "$found") - t0 ))s after the unit started — it authenticated and connected"
     else
       printf '    last 15 journal lines for joggo-slot@%s:\n' "$n"
       journalctl -u "joggo-slot@${n}.service" --no-pager -n 15 2>/dev/null | sed 's/^/      /'
-      v_unk "whether slot $n is online (no 'Listening for Jobs' in $diag within 180s). 'enabled' and 'active' do not answer this."
+      v_unk "whether slot $n is online (no 'Listening for Jobs' in a log from this start, within 420s of verify). 'enabled' and 'active' do not answer this."
     fi
     n=$((n+1))
   done
@@ -1153,7 +1183,8 @@ phase_verify() {
     elif [ "$(systemctl is-active dnsmasq 2>/dev/null)" != "active" ]; then
       v_fail "dnsmasq is not active, so the AAAA filter is not in effect"
     else
-      local probe_host=www.google.com up_aaaa fl_aaaa gw=10.201.1.1
+      local probe_host=www.google.com up_aaaa fl_aaaa gw
+      gw="$(slot_net_base).1.1"
       up_aaaa="$(dig +short +time=3 +tries=1 @10.255.255.254 AAAA "$probe_host" 2>/dev/null | grep -c ':' || true)"
       if [ "${up_aaaa:-0}" = "0" ]; then
         v_unk "whether the AAAA filter works: the POSITIVE CONTROL failed — the upstream resolver returned no AAAA for $probe_host, so an empty answer from the filter would mean nothing"

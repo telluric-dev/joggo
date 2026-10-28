@@ -220,3 +220,37 @@ empty — so tests appear to pass while actually running against the wrong path.
 export MSYS_NO_PATHCONV=1     # before any wsl.exe call that carries a linux path
 wsl -d Ubuntu -u root bash -c '...'; echo "rc=$?"   # rc from the OUTER shell
 ```
+
+## 7. Slots "active" but offline, and the runner log says `Resource temporarily unavailable`
+
+Every WSL2 distro on a machine shares **one network stack**: one kernel, one route table, one
+set of iptables chains. So two things in different distros that each create Docker networks can
+collide, and a collision does not look like an error. The slot starts, its container runs, it
+never comes online, and the runner's own log shows DNS failing:
+
+```
+System.Net.Sockets.SocketException (11): Resource temporarily unavailable
+```
+
+Check from inside the distro, and look for **two** routes for one slot subnet:
+
+```bash
+ip -4 route | grep '10\.211\.'          # one line per slot is right; two for the same /24 is the fault
+```
+
+The launcher refuses to *create* a network on a subnet something else already routes, and says
+so in `journalctl -u joggo-slot@1`. If you are running joggo next to another runner or Docker
+daemon in the same WSL VM, move joggo's range:
+
+```bash
+echo 'SLOT_NET_BASE=10.212' | sudo tee /etc/default/joggo-slot
+sudo systemctl restart 'joggo-slot@*'
+```
+
+Found on the first real install: joggo inherited a hardcoded `10.201.<slot>` from the runner it
+was extracted from, and installed next to that runner both had a bridge on each subnet.
+
+**A different cause with the same symptom:** containers on Docker's default network cannot
+reach WSL's tunnelled DNS (`nameserver 10.255.255.254` in `/etc/resolv.conf`). The installer
+writes `/etc/docker/daemon.json` `"dns"` for that case (step 40); if you installed Docker by
+hand, check that file first.

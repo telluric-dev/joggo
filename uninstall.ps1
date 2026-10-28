@@ -156,7 +156,10 @@ if(-not (Confirm-Joggo -Ctx $ctx -Question 'Proceed?')){
 # needed no elevation (slots only: no guard, sampler or keepalive task) could not be REMOVED
 # without it. Found on the first real uninstall. Everything else here -- the distro side and
 # C:\ProgramData\joggo, which an unelevated install created -- needs no admin.
-$joggoTasks = @(Get-ScheduledTask -TaskName 'joggo*' -ErrorAction SilentlyContinue)
+# Only SYSTEM tasks need it: an unelevated install's keepalive runs as the user, and the user
+# can remove their own task.
+$joggoTasks = @(Get-ScheduledTask -TaskName 'joggo*' -ErrorAction SilentlyContinue |
+                Where-Object { $_.Principal.UserId -match '(?i)^(SYSTEM|NT AUTHORITY\\SYSTEM|S-1-5-18)$' })
 if($joggoTasks.Count -gt 0 -and -not (Test-Admin)){
   Fail -Ctx $ctx -Problem ("not running as Administrator, and {0} joggo scheduled task(s) exist: {1}" -f $joggoTasks.Count, (($joggoTasks | ForEach-Object TaskName) -join ', ')) `
     -Action 'unregistering SYSTEM scheduled tasks needs elevation. Re-run in an elevated PowerShell.' -Code 1

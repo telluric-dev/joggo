@@ -18,8 +18,8 @@ $taskName = 'joggo-wsl-keepalive'
 $keepArgs = ('-d {0} --exec sleep infinity' -f $Cfg.distro)
 
 if(-not $Cfg.startOnBoot){
-  Warn $Ctx '-NoStartOnBoot: no keepalive task. The WSL2 VM will shut down when the last process exits or you log off,'
-  Say  $Ctx '  and CI stops with it. Units are still enabled, but nothing holds the VM up.'
+  Warn $Ctx '-NoStartOnBoot: no keepalive task. WSL powers the distro off about 30 seconds after the last session into it closes,'
+  Say  $Ctx '  and CI stops with it -- measured: right after this installer exits. Units are still enabled, but nothing holds the distro up.'
   Add-Result $Ctx 'keepalive' 'warn' 'startOnBoot disabled; nothing holds the WSL2 VM open' 're-run without -NoStartOnBoot'
 } else {
   if($Ctx.DryRun){
@@ -31,9 +31,34 @@ if(-not $Cfg.startOnBoot){
     if(-not $exe){
       Undetermined -Ctx $Ctx -What 'the path to wsl.exe for the keepalive task' -Action 'repair WSL (step 10), reboot, and re-run'
     }
-    $action    = New-ScheduledTaskAction -Execute $exe.Source -Argument $keepArgs
-    $trigger   = New-ScheduledTaskTrigger -AtStartup
-    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    # TWO VARIANTS, chosen by elevation, because the alternative was no keepalive at all.
+    #
+    # Elevated: SYSTEM, at startup -- holds the distro with nobody logged on. The right one.
+    #
+    # Not elevated: the installing user, at THEIR logon. Any user may register a task that runs
+    # as themselves, so this needs no admin. It holds the distro while that user is logged in
+    # and comes back at their next logon after a reboot. Without it, an unelevated install
+    # passed verify and then went offline: WSL powered the distro off 32 seconds after the
+    # installer's last session closed (journal: "systemd-logind: The system will power off
+    # now!"), measured on the first real unelevated run.
+    #
+    # Launched through `conhost --headless` in the user variant: a wsl.exe started in an
+    # interactive session would otherwise hold a console window open on the desktop forever.
+    $admin = Test-Admin
+    if($admin){
+      $action    = New-ScheduledTaskAction -Execute $exe.Source -Argument $keepArgs
+      $trigger   = New-ScheduledTaskTrigger -AtStartup
+      $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+      $who = $null
+    } else {
+      $who       = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+      $conhost   = Join-Path $env:WINDIR 'System32\conhost.exe'
+      $action    = New-ScheduledTaskAction -Execute $conhost -Argument ('--headless "{0}" {1}' -f $exe.Source, $keepArgs)
+      $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $who
+      $principal = New-ScheduledTaskPrincipal -UserId $who -LogonType Interactive -RunLevel Limited
+      Warn $Ctx "not elevated: the keepalive runs as $who at logon, so CI is up while you are logged in and returns at your next logon after a reboot."
+      Say  $Ctx '  for a runner that works with nobody logged on, re-run elevated: the keepalive is then SYSTEM at startup.'
+    }
     # RestartCount/RestartInterval matter here and nowhere else: this task is
     # SUPPOSED to run forever, so if it ever exits — because the VM went down,
     # including a restart the memory guard performed on purpose — something has
@@ -47,7 +72,8 @@ if(-not $Cfg.startOnBoot){
     } catch {
       Fail -Ctx $Ctx -Problem "registering '$taskName' failed: $($_.Exception.Message)" -Action 'run install.ps1 in an ELEVATED PowerShell' -Code 1
     }
-    [void](Assert-JoggoTask -Ctx $Ctx -Name $taskName)
+    if($who){ [void](Assert-JoggoTask -Ctx $Ctx -Name $taskName -ExpectUser $who) }
+    else    { [void](Assert-JoggoTask -Ctx $Ctx -Name $taskName) }
 
     # Start it and check the state that is CORRECT for this task: Running, and
     # staying that way. LastTaskResult is the wrong instrument here — a task
@@ -77,7 +103,8 @@ if(-not $Cfg.startOnBoot){
         -Action "check the task's action by hand: wsl.exe $keepArgs" -Code 1
     }
     Ok $Ctx "distro '$($Cfg.distro)' is Running — the effect, read from wsl.exe rather than inferred from the task"
-    Add-Result $Ctx 'keepalive' 'pass' "$taskName Running as SYSTEM at startup; distro Running" ''
+    if($who){ Add-Result $Ctx 'keepalive' 'warn' "$taskName Running as $who at logon (not elevated); distro Running" 're-run elevated for a SYSTEM keepalive that works with nobody logged on' }
+    else    { Add-Result $Ctx 'keepalive' 'pass' "$taskName Running as SYSTEM at startup; distro Running" '' }
   }
 }
 

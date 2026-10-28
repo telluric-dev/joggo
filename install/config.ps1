@@ -778,9 +778,12 @@ function Assert-JoggoTask {
   param(
     [hashtable]$Ctx,
     [Parameter(Mandatory=$true)][string]$Name,
-    [int]$EveryMinutes = 0
+    [int]$EveryMinutes = 0,
+    # The account the task must run as. SYSTEM for everything except the unelevated
+    # keepalive, which is deliberately registered as the installing user (see 95-boot).
+    [string]$ExpectUser = ''
   )
-  if($Ctx.DryRun){ Plan $Ctx "would read back task '$Name' and assert SYSTEM / enabled / interval"; return $true }
+  if($Ctx.DryRun){ Plan $Ctx "would read back task '$Name' and assert $(if($ExpectUser){$ExpectUser}else{'SYSTEM'}) / enabled / interval"; return $true }
 
   $t = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
   if(-not $t){
@@ -788,7 +791,12 @@ function Assert-JoggoTask {
   }
   $problems = New-Object System.Collections.ArrayList
   if($t.State -eq 'Disabled'){ [void]$problems.Add('the task is DISABLED') }
-  if($t.Principal.UserId -notmatch '(?i)^(SYSTEM|NT AUTHORITY\\SYSTEM|S-1-5-18)$'){
+  if($ExpectUser){
+    # Compare on the bare account name: the scheduler stores "user" or "DOMAIN\user".
+    if(($t.Principal.UserId -split '\\')[-1] -ne ($ExpectUser -split '\\')[-1]){
+      [void]$problems.Add("it runs as '$($t.Principal.UserId)', not '$ExpectUser'")
+    }
+  } elseif($t.Principal.UserId -notmatch '(?i)^(SYSTEM|NT AUTHORITY\\SYSTEM|S-1-5-18)$'){
     [void]$problems.Add("it runs as '$($t.Principal.UserId)', not SYSTEM — it would not run with nobody logged on")
   }
   $set = $t.Settings
@@ -800,9 +808,16 @@ function Assert-JoggoTask {
   $interval = $null
   foreach($trg in @($t.Triggers)){
     if($trg.CimClass.CimClassName -match 'BootTrigger'){ $hasStartup = $true }
+    # A user task's equivalent of "survives a reboot" is a logon trigger: it returns at that
+    # user's next logon. Only accepted when a user principal was asked for -- a SYSTEM task
+    # with a logon trigger would be a mistake, not a variant.
+    if($ExpectUser -and $trg.CimClass.CimClassName -match 'LogonTrigger'){ $hasStartup = $true }
     if($trg.Repetition -and $trg.Repetition.Interval){ $interval = $trg.Repetition.Interval }
   }
-  if(-not $hasStartup){ [void]$problems.Add('no at-startup trigger — it would not survive a reboot') }
+  if(-not $hasStartup){
+    if($ExpectUser){ [void]$problems.Add('no at-logon trigger — it would not come back after a reboot') }
+    else           { [void]$problems.Add('no at-startup trigger — it would not survive a reboot') }
+  }
   if($EveryMinutes -gt 0){
     if(-not $interval){
       [void]$problems.Add("no repetition interval — it would run once at boot and never again (wanted every $EveryMinutes min)")
@@ -813,9 +828,10 @@ function Assert-JoggoTask {
   if($problems.Count -gt 0){
     Fail -Ctx $Ctx -Problem ("scheduled task '$Name' is registered but wrong: " + ($problems -join '; ')) -Action "unregister it and re-run: Unregister-ScheduledTask -TaskName $Name -Confirm:`$false" -Code 1
   }
-  $iv = 'at startup'
-  if($interval){ $iv = "at startup, repeating $interval" }
-  Ok $Ctx "task '$Name': registered, enabled, SYSTEM, $iv — read back from the scheduler"
+  $iv = $(if($ExpectUser){ 'at logon' } else { 'at startup' })
+  if($interval){ $iv = "$iv, repeating $interval" }
+  $acct = $(if($ExpectUser){ $t.Principal.UserId } else { 'SYSTEM' })
+  Ok $Ctx "task '$Name': registered, enabled, $acct, $iv — read back from the scheduler"
   return $true
 }
 

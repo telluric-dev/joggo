@@ -334,36 +334,36 @@ identifiers removed. It has run continuously for months in its original form.
 admit. The shell scripts pass `bash -n`; the reusable workflows are exercised daily by
 real builds but are not validated in this repository.
 
-**The installer has not yet completed a full run on a clean machine.** Here is exactly
-how far it has been proven, on a fresh Ubuntu 24.04 distro on the machine this was
-extracted from (unelevated, `-Slots 1`, guard and boot tasks off):
+**What has been run for real, end to end.** On a fresh Ubuntu 24.04 distro, Windows 11,
+16 GB, as an ordinary (unelevated) user, against a real repository:
 
-| Step | Real run |
+| | Result |
 |---|---|
-| `10-wsl-feature` | skipped correctly — the distro answering a command proves both features are on |
-| `20-distro` | **passes** — payload staged byte-exact (SHA-256 matched inside and out) |
-| `30-runner-user` | **passes** — `ghrunner` created, never root |
-| `40-docker` | **passes** — native Docker Engine installed and verified by asking the daemon |
-| `50-dind-image` | `joggo/dind:local` **built**; the runner image's first build was cut short by a VM restart |
-| `60`–`99` | **never executed** — registration needs a token, and the box was needed for real work |
-| guard, sampler, keepalive | **never executed** — they need an elevated run |
+| Install, 2 slots | every step passes; verify reports 0 failures |
+| Both runners online on GitHub | yes, and **still online 150 s after the installer exited** with nothing touching WSL |
+| Re-run with `-Slots 1` | slot 2 retired: disabled, **deregistered**, root removed; slot 1 untouched |
+| Uninstall `-Deep` | 0 runners left on GitHub, 0 tasks, `C:\ProgramData\joggo` gone, logs kept |
+| Elevated install (guard, sampler, SYSTEM keepalive) | **not yet run end to end** — the steps are the same code paths the guard has used for months on the original box, but this repository's installer has not registered them on a clean machine |
 
-Getting that far found **seven** defects, each of which stopped every install on every
-machine, and none of which a dry run could see. The two worth knowing about:
+Getting there found **more than twenty** defects. About ten stopped every install outright; the
+rest left something broken behind. None was visible to a dry run. The ones worth knowing:
 
-- **The Linux half could never be staged.** `Get-Content -Raw` reads a BOM-less UTF-8
-  file as ANSI under Windows PowerShell 5.1, and `StandardInput.Write` re-encodes through
-  the console code page: 59,026 characters went into the pipe for a 58,953-character
-  file. Enough of the mojibake landed inside quoted strings that bash failed 150 lines
-  later at the first parenthesis. The corrupted string was never printed — it went
-  straight into a pipe — so only running it could find it.
-- **`phase_docker` refused to install Docker because Docker was on `PATH`.** WSL appends
-  the Windows `PATH`, so a host with Docker Desktop puts `docker.exe` in every distro.
-  The check fired before the native install that would have fixed it, and told the
-  operator to disable an integration the socket check had just proven was off.
+- **WSL's tunnelled DNS is unreachable from Docker's bridge**, so on a fresh install every
+  container build failed at its first network step. The installer now writes Docker's DNS
+  from the Windows adapters that are up, querying each before trusting it.
+- **All WSL2 distros share one network stack.** Two runners in one WSL VM with the same slot
+  subnet black-hole each other's traffic. The default subnet is now configurable, and the
+  launcher refuses a subnet something else already routes.
+- **WSL powers a distro off ~30 s after its last session closes.** Without a keepalive the
+  runner passed verify and went offline when the installer exited. Unelevated, the keepalive
+  now runs as you at logon.
+- **The runner image runs as uid 1001;** a fresh `useradd` picks 1000, and every slot
+  crash-looped on its first write. `ghrunner` is now created as 1001.
+- **Text sent to the distro was re-encoded twice** (ANSI read, console-codepage pipe), so
+  the Linux half of the installer could never be staged at all.
 
-If you are the first to run it end to end: please open an issue with the transcript,
-pass or fail. That run is worth more than any amount of review.
+If you are the first to run it on another machine, especially the elevated path: please
+open an issue with the transcript, pass or fail. That run is worth more than any review.
 
 **Known limits, documented in place rather than in a tracker:**
 

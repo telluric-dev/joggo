@@ -1,11 +1,21 @@
 # Quickstart — nothing to a green build
 
 **Target: Windows 10 2004+ or Windows 11 with WSL2.** That is the only supported configuration;
-there is no native-Linux or VM path. Everything below runs in an **elevated PowerShell** on the
-Windows host.
+there is no native-Linux or VM path. Run the commands below in PowerShell on the Windows host,
+**elevated if you can**:
 
-You need: admin on the box, virtualization enabled in firmware, 8 GB RAM (12 GB if you want two
-slots), 40 GB free, and a GitHub registration token. Tailscale is **not** required.
+| | Elevated | Not elevated |
+|---|---|---|
+| Runner slots, Docker, watchdog, monitor | yes | yes |
+| Keepalive (holds the WSL distro up) | SYSTEM, at startup: works with nobody logged on | as you, at logon: works while you are logged in |
+| Memory guard + 5-minute sampler | yes | no (pass `-NoGuard -NoSampler`, or the installer stops and says why) |
+
+Without some keepalive WSL powers the distro off about 30 seconds after the installer exits,
+and the runner goes with it — so there always is one; elevation decides which.
+
+You need: virtualization enabled in firmware, 8 GB RAM (16 GB if you want two slots — see
+[How many slots](adding-a-slot.md#how-many-slots)), 30 GB free on the drive your WSL distro
+lives on, and a GitHub registration token. Tailscale is **not** required.
 
 ## 1. Check the box before changing it
 

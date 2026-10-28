@@ -332,6 +332,28 @@ identifiers removed. It has run continuously for months in its original form.
 admit. The shell scripts pass `bash -n`; the reusable workflows are exercised daily by
 real builds but are not validated in this repository.
 
+**The installer has never completed a full run on a clean machine.** Steps are
+individually defensive and the whole thing dry-runs end to end, but no install has
+reached `99-verify` for real. A first attempt on the machine this was extracted from
+got as far as the elevation gate and stopped. What that attempt did prove, by failing:
+
+- Preflight claimed `gh` authentication meant "the installer can mint a registration
+  token through it". It cannot — there is no minting code in this repository. Fixed;
+  preflight now prints the `gh api` command instead. A dry run could not have found
+  it, because the claim and the contradiction live in two different programs and each
+  is internally consistent.
+- `-Distro <name>` for a distro that is not installed exits **2** (fix your command
+  line) rather than offering a several-hundred-MB download, on the grounds that it is
+  far more likely a typo. That is deliberate, and it is what the exit-code split is for.
+
+**Elevation is required unconditionally, and the reason given may not apply.** The gate
+names "the Windows features, the SYSTEM scheduled tasks and the keepalive" — but with
+`-NoGuard -NoSampler -NoWatchdog -NoStartOnBoot` none of those is being installed, and
+a slots-only install does all its work as root *inside* WSL, which is not Windows admin.
+So an install that needs no elevation is still refused, with a message listing three
+causes that are not present. Making the gate conditional on what was actually requested
+is the obvious fix and is deliberately **not** applied here: loosening a privilege check
+is the operator's call, not a convenience to be taken while testing.
 **Known limits, documented in place rather than in a tracker:**
 
 - `--once` costs **83–108 s** of container rebuild per job, and GitHub's

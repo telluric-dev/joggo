@@ -20,6 +20,42 @@ single most useful page here** even if you never run any of this.
 
 ---
 
+## Why bother: the Actions bill
+
+GitHub-hosted minutes are metered. Private repositories get a monthly allowance and
+then bill per minute, and the rate is multiplied by the runner: Linux is the cheapest,
+Windows costs several times more per minute, macOS more again. Check your own numbers at
+**Settings → Billing → Plans and usage** — that page tells you what you are actually
+spending, and whether any of this is worth your evening.
+
+**Minutes on a runner you own are not metered at all.** You pay electricity and the
+hardware you already bought. For a handful of repositories that rebuild a Docker image
+on every push to `main`, that is usually where the bill is, and moving it to a desktop
+that is idle most of the day removes it.
+
+What this does **not** save, so the sums are honest:
+
+- **Package storage and data transfer** are billed separately and are unaffected — you
+  are still pushing images to GHCR.
+- **Jobs that must stay hosted** keep costing what they cost. Anything needing
+  `windows-latest` or `macos-latest` cannot move here; this is linux/amd64 only.
+- **A monitor that watches your production service should not run on the box it shares
+  resources with** — it will go red because the runner was busy, which is
+  indistinguishable from the service being down. Leave that hosted.
+
+And what it costs you instead:
+
+- **The machine must stay on.** An asleep runner is a CI outage for every repository
+  pointed at it.
+- **It is slower per job, not faster.** Each job here pays 83–108 s of container rebuild
+  at the handoff — measured, see [Known limits](#status-and-honesty). You are buying
+  money back, not wall-clock.
+- **You now own a security boundary.** A self-hosted runner executes whatever the
+  allowed repositories tell it to, on your hardware, inside your network. Read
+  [`SECURITY.md`](SECURITY.md) before the first install, not after.
+
+---
+
 ## What you get
 
 ```

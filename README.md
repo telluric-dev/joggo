@@ -334,28 +334,37 @@ identifiers removed. It has run continuously for months in its original form.
 admit. The shell scripts pass `bash -n`; the reusable workflows are exercised daily by
 real builds but are not validated in this repository.
 
-**The installer has never completed a full run on a clean machine.** Steps are
-individually defensive and the whole thing dry-runs end to end, but no install has
-reached `99-verify` for real. A first attempt on the machine this was extracted from
-got as far as the elevation gate and stopped. What that attempt did prove, by failing:
+**The installer has not yet completed a full run on a clean machine.** Here is exactly
+how far it has been proven, on a fresh Ubuntu 24.04 distro on the machine this was
+extracted from (unelevated, `-Slots 1`, guard and boot tasks off):
 
-- Preflight claimed `gh` authentication meant "the installer can mint a registration
-  token through it". It cannot — there is no minting code in this repository. Fixed;
-  preflight now prints the `gh api` command instead. A dry run could not have found
-  it, because the claim and the contradiction live in two different programs and each
-  is internally consistent.
-- `-Distro <name>` for a distro that is not installed exits **2** (fix your command
-  line) rather than offering a several-hundred-MB download, on the grounds that it is
-  far more likely a typo. That is deliberate, and it is what the exit-code split is for.
+| Step | Real run |
+|---|---|
+| `10-wsl-feature` | skipped correctly — the distro answering a command proves both features are on |
+| `20-distro` | **passes** — payload staged byte-exact (SHA-256 matched inside and out) |
+| `30-runner-user` | **passes** — `ghrunner` created, never root |
+| `40-docker` | **passes** — native Docker Engine installed and verified by asking the daemon |
+| `50-dind-image` | `joggo/dind:local` **built**; the runner image's first build was cut short by a VM restart |
+| `60`–`99` | **never executed** — registration needs a token, and the box was needed for real work |
+| guard, sampler, keepalive | **never executed** — they need an elevated run |
 
-**Elevation is required unconditionally, and the reason given may not apply.** The gate
-names "the Windows features, the SYSTEM scheduled tasks and the keepalive" — but with
-`-NoGuard -NoSampler -NoWatchdog -NoStartOnBoot` none of those is being installed, and
-a slots-only install does all its work as root *inside* WSL, which is not Windows admin.
-So an install that needs no elevation is still refused, with a message listing three
-causes that are not present. Making the gate conditional on what was actually requested
-is the obvious fix and is deliberately **not** applied here: loosening a privilege check
-is the operator's call, not a convenience to be taken while testing.
+Getting that far found **seven** defects, each of which stopped every install on every
+machine, and none of which a dry run could see. The two worth knowing about:
+
+- **The Linux half could never be staged.** `Get-Content -Raw` reads a BOM-less UTF-8
+  file as ANSI under Windows PowerShell 5.1, and `StandardInput.Write` re-encodes through
+  the console code page: 59,026 characters went into the pipe for a 58,953-character
+  file. Enough of the mojibake landed inside quoted strings that bash failed 150 lines
+  later at the first parenthesis. The corrupted string was never printed — it went
+  straight into a pipe — so only running it could find it.
+- **`phase_docker` refused to install Docker because Docker was on `PATH`.** WSL appends
+  the Windows `PATH`, so a host with Docker Desktop puts `docker.exe` in every distro.
+  The check fired before the native install that would have fixed it, and told the
+  operator to disable an integration the socket check had just proven was off.
+
+If you are the first to run it end to end: please open an issue with the transcript,
+pass or fail. That run is worth more than any amount of review.
+
 **Known limits, documented in place rather than in a tracker:**
 
 - `--once` costs **83–108 s** of container rebuild per job, and GitHub's

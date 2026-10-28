@@ -189,6 +189,36 @@ function Get-PausedSlots {
   @($r.out -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' })
 }
 
+# RELEASE, THEN PROVE IT, AND KEEP HOLDING WHAT CANNOT BE PROVEN RELEASED.
+#
+# The original of this guard once restarted the VM under pressure, found the distro "did
+# not answer", sent the resume calls into a VM that was not listening -- and logged
+# "resumed slot 1 (reported: )" before clearing heldSlots unconditionally. The pause
+# flags live on disk, so they survived everything after that, including a full
+# `wsl --shutdown`. The guard no longer remembered holding anything, and its RECOVERED
+# path only runs while heldSince is set, so nothing ever released them. Both slots sat
+# paused for six hours while their units reported `active` and the queue grew.
+#
+# So each release reads the flag back in the same call and answers with a token:
+#   FREE:<n>  the flag is gone              -> drop it from heldSlots
+#   HELD:<n>  the flag is still there       -> keep it
+#   neither   WSL did not answer, or answered with nothing we can trust -> keep it
+# Whatever is kept stays in the state file with heldSince intact, so the next pass that
+# finds memory healthy goes through RECOVERED and tries again. Silence is never success.
+function Release-HeldSlots([object[]]$Slots){
+  $still = @()
+  foreach($s in @($Slots)){
+    if($DryRun){ Log "  [dry-run] would resume slot $s and read its flag back"; $still += $s; continue }
+    $flag = "/var/lib/joggo-slot/$s.paused"
+    $r = Invoke-Wsl ("if [ -x /usr/local/sbin/joggo-pause ]; then /usr/local/sbin/joggo-pause resume --slot $s >/dev/null 2>&1; else rm -f $flag; fi; " +
+                     "if [ -e $flag ]; then echo HELD:$s; else echo FREE:$s; fi") 60
+    if($r.out -match "(?m)^FREE:$s\s*$"){ Log "  resumed slot $s (flag read back: gone)" }
+    elseif($r.out -match "(?m)^HELD:$s\s*$"){ Log "  slot $s STILL PAUSED after resume -- its flag is still there; keeping the hold, next pass retries"; $still += $s }
+    else { Log "  slot ${s}: could not confirm the release (WSL: $(if($r.err){$r.err}else{'no answer'})) -- keeping the hold, next pass retries"; $still += $s }
+  }
+  ,$still
+}
+
 function Read-State {
   if(Test-Path $StateFile){ try { return (Get-Content $StateFile -Raw | ConvertFrom-Json) } catch {} }
   [pscustomobject]@{ heldSince = $null; heldSlots = @(); lastRestart = $null }
@@ -216,12 +246,10 @@ if($Status){
 if($free -ge $WarnMB){
   if($state.heldSince){
     Log "RECOVERED free=${free}MB vmmem=${vmmem}MB — releasing the slots this guard held: $($state.heldSlots -join ', ')"
-    foreach($s in @($state.heldSlots)){
-      if($DryRun){ Log "  [dry-run] would resume slot $s" ; continue }
-      $r = Invoke-Wsl "if [ -x /usr/local/sbin/joggo-pause ]; then /usr/local/sbin/joggo-pause resume --slot $s || true; else rm -f /var/lib/joggo-slot/$s.paused; fi" 60
-      Log "  resumed slot $s$(if(-not $r.ok){' (reported: ' + $r.err + ')'})"
-    }
-    $state.heldSince = $null; $state.heldSlots = @(); Write-State $state
+    $still = Release-HeldSlots $state.heldSlots
+    if($DryRun){ exit 0 }
+    if($still.Count -eq 0){ $state.heldSince = $null }
+    $state.heldSlots = $still; Write-State $state
   }
   exit 0
 }
@@ -255,11 +283,9 @@ if(-not $DryRun){
   if($freeAfterDrop -ge $WarnMB){
     Log "  RECOVERED by dropping cache alone — nothing paused, nothing restarted."
     if($state.heldSince){
-      foreach($s in @($state.heldSlots)){
-        $rr = Invoke-Wsl "if [ -x /usr/local/sbin/joggo-pause ]; then /usr/local/sbin/joggo-pause resume --slot $s || true; else rm -f /var/lib/joggo-slot/$s.paused; fi" 60
-        Log "  resumed slot $s"
-      }
-      $state.heldSince = $null; $state.heldSlots = @(); Write-State $state
+      $still = Release-HeldSlots $state.heldSlots
+      if($still.Count -eq 0){ $state.heldSince = $null }
+      $state.heldSlots = $still; Write-State $state
     }
     exit 0
   }
@@ -329,10 +355,7 @@ try {
 
   # Release the holds this guard placed. The slot units are already up; the flag is the
   # only thing still telling them not to take work.
-  foreach($s in @($state.heldSlots)){
-    $rr = Invoke-Wsl "if [ -x /usr/local/sbin/joggo-pause ]; then /usr/local/sbin/joggo-pause resume --slot $s || true; else rm -f /var/lib/joggo-slot/$s.paused; fi" 60
-    Log "  resumed slot $s$(if(-not $rr.ok){' (reported: ' + $rr.err + ')'})"
-  }
+  $still = Release-HeldSlots $state.heldSlots
 
   Start-Sleep -Seconds 5
   $after = Get-FreeMB; $vmAfter = Get-VmmemMB
@@ -340,7 +363,12 @@ try {
   if($after -lt $WarnMB){
     Log "  STILL LOW after a restart. That points away from WSL — check the Windows side (Dropbox, Defender, browsers) before letting this run again."
   }
-  $state.lastRestart = (Get-Date).ToString('o'); $state.heldSince = $null; $state.heldSlots = @()
+  # Only forget a hold that was proven released. A slot still listed here keeps heldSince
+  # set, so the next healthy pass releases it through RECOVERED instead of nobody ever
+  # releasing it at all.
+  $state.lastRestart = (Get-Date).ToString('o')
+  if($still.Count -eq 0){ $state.heldSince = $null }
+  $state.heldSlots = $still
   Write-State $state
 } catch {
   Log "RESTART FAILED: $($_.Exception.Message)"

@@ -407,23 +407,41 @@ if ($Slots -gt 0) {
   }
 }
 
-# -- disk-system
-# NOTE the vhdx check below. The system drive is what the contract names, but it is
-# not necessarily where the bytes land.
+# -- disk-system  (ADVISORY. vhdx-drive below is the blocking disk check.)
+#
+# This used to FAIL below the threshold, and on the machine it was written for that
+# produced a contradiction visible in preflight's own output:
+#
+#   [FAIL] disk-system  22.5 GB free on C: -- below the 40 GB the install wants
+#   [PASS] vhdx-drive   Ubuntu's VHDX is on D: with 1733.5 GB free
+#                       -- that is the drive the install actually consumes
+#
+# It blocked on one drive while the line beneath it said a different drive was the one
+# that mattered. The install's bulk -- the runner tarball, the images, the slot work
+# volumes -- lands inside the distro, so on the VHDX drive. The system drive holds only
+# the scheduled-task state, the config and the memory trail: megabytes, not gigabytes.
+#
+# So this is a WARN against a much smaller floor, and vhdx-drive is what stops an
+# install. The original "40 GB free on the system drive" was an error in the contract I
+# was built from, not in this check; the contract is corrected and this is the code
+# catching up.
 $sysDrive = $env:SystemDrive
+$sysFloorGB = 5
 try {
   $ld = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$sysDrive'" -ErrorAction Stop
   if (-not $ld) { throw "no logical disk for $sysDrive" }
   $freeGB = [math]::Round($ld.FreeSpace / 1GB, 1)
-  if ($freeGB -ge $MinSysDriveGB) {
-    Add-Check disk-system pass "$freeGB GB free on $sysDrive (need $MinSysDriveGB GB)"
+  if ($freeGB -ge $sysFloorGB) {
+    Add-Check disk-system pass "$freeGB GB free on $sysDrive (needs $sysFloorGB GB for task state, config and the memory trail; the bulk goes to the VHDX drive)"
   } else {
-    Add-Check disk-system fail "$freeGB GB free on $sysDrive -- below the $MinSysDriveGB GB the install wants" `
-      "Free space on $sysDrive (cleanmgr, or move the WSL distro's VHDX to another drive and re-check). The runner tarball, the dind image and the slot work volumes all grow here unless the distro lives elsewhere -- see the vhdx check."
+    Add-Check disk-system warn "$freeGB GB free on $sysDrive -- under $sysFloorGB GB, which is tight for the config, the task state and the memory trail" `
+      "Free a little space on $sysDrive (cleanmgr). This does not block the install: the bulk lands on the VHDX drive, which vhdx-drive checks."
   }
 } catch {
-  Add-Check disk-system fail "could not determine free space on $sysDrive -- $($_.Exception.Message)" `
-    "Check it by hand (Get-PSDrive $($sysDrive.TrimEnd(':'))) and ensure at least $MinSysDriveGB GB free before installing."
+  # Cannot determine is not fine, but it is not blocking either — the blocking disk
+  # question is vhdx-drive's, and it is asked separately.
+  Add-Check disk-system warn "could not determine free space on $sysDrive -- $($_.Exception.Message)" `
+    "Check it by hand: Get-PSDrive $($sysDrive.TrimEnd(':')). Only a few GB are needed here; vhdx-drive is the one that matters."
 }
 
 # -- power-sleep

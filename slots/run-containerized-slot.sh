@@ -426,6 +426,12 @@ main() {
     # Covering every client needs the filter at the RESOLVER instead; the config for that is
     # network/filter-aaaa.conf, and installing it is the operator's call because it
     # adds a service to the box.
+    #
+    # 2026-11-01: timeout:1 attempts:3 shortens the resolver's retry. Measured from the
+    # slots: about 1 in 4 UDP lookups to public resolvers lost a packet, and glibc waits 5 s
+    # before retrying, so one dropped packet stacked past tool timeouts and builds failed on
+    # "Could not resolve host" / "Temporary failure in name resolution". With these, a lost
+    # packet costs 1 s. Unlike no-aaaa, musl honours timeout and attempts too.
     docker run -d --name "$DIND_C" --network "$NET" --network-alias dind --privileged \
         --sysctl net.ipv6.conf.all.disable_ipv6=1 \
         -e DOCKER_TLS_CERTDIR= \
@@ -433,7 +439,7 @@ main() {
         -v "$EXT_DIR":"$EXT_DIR":ro \
         -v "$WORK_VOL":"$RUNNER_ROOT/_work" \
         "$DIND_IMAGE" --host=tcp://0.0.0.0:2375 \
-        --dns-opt=no-aaaa >/dev/null || die "dind failed to start"
+        --dns-opt=no-aaaa --dns-opt=timeout:1 --dns-opt=attempts:3 >/dev/null || die "dind failed to start"
 
     log "waiting for the slot daemon"
     for i in $(seq 1 30); do

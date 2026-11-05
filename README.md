@@ -22,6 +22,22 @@ single most useful page here** even if you never run any of this.
 
 ---
 
+## Problems this solves
+
+If you landed here from an error message, these are the ones joggo has a measured cause
+and a working fix for. Each link goes to the write-up, whether or not you use joggo.
+
+| You see | What it actually was |
+|---|---|
+| `i/o timeout` on `127.0.0.11:53`, `ENOTFOUND`, `Could not resolve host`, green on re-run | One lost DNS packet waiting out glibc's 5 s retry. [docs/dns-packet-loss.md](docs/dns-packet-loss.md) |
+| `The token expired on …`, then `The runner registration has been deleted from the server` | WSL2's clock froze while the PC slept, so every OAuth token looked expired. [docs/recovery.md §2](docs/recovery.md#2-failure-a--clock-drift-killed-the-registration) |
+| Jobs queued forever, runner `active`, log silent, 0% CPU | A listener hung inside its token refresh. [docs/recovery.md §3](docs/recovery.md#3-failure-b--wedged-listener-hung-but-alive) |
+| `The job was not acquired by Runner of type self-hosted even after multiple attempts` | GitHub's acquisition timeout racing the runner's restart between jobs. [docs/memory-pressure.md §8](docs/memory-pressure.md#8-how-to-tell-an-acquisition-death-from-a-real-failure) |
+| `The self-hosted runner lost communication with the server` after a Windows Update | The reboot killed the job; joggo re-runs it. [docs/operations.md](docs/operations.md#automatic-retry-after-a-reboot) |
+| The PC runs out of memory and builds die, with no obvious culprit | Usually not the runner: a terminal emulator grew to 6 GB here. [docs/memory-pressure.md](docs/memory-pressure.md) |
+
+---
+
 ## Why bother: the Actions bill
 
 GitHub-hosted minutes are metered. Private repositories get a monthly allowance and

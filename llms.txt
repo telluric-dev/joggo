@@ -1,0 +1,28 @@
+# joggo
+
+> A self-hosted GitHub Actions runner for one ordinary Windows PC with WSL2: containerised,
+> one-job-per-container runner slots, a memory guard that holds new jobs when the desktop is
+> short of RAM, and self-heals for the failures that took a real runner down (WSL2 clock
+> freeze, a hung listener, Windows Update reboots). MIT. Linux/amd64 jobs only; private
+> repositories only.
+
+Most files carry the failure that produced them and what was measured. The docs are useful
+even without running joggo.
+
+## Start here
+
+- [README](README.md): what it is, costs and limits, setup, and an operating contract for AI agents
+- [Quickstart](docs/quickstart.md): shortest path to a green build
+- [Security](SECURITY.md): the threat model; read before installing
+
+## Failures with a measured cause and fix
+
+- [DNS packet loss](docs/dns-packet-loss.md): `i/o timeout` on 127.0.0.11:53 / `Could not resolve host` in CI; fix with `timeout:1 attempts:3`
+- [Recovery](docs/recovery.md): runner not taking jobs; clock drift vs. wedged listener vs. Actions outage vs. reboot, with opposite fixes
+- [Memory pressure](docs/memory-pressure.md): running CI on a 16 GB desktop; the guard, and why `FreePhysicalMemory` misleads
+- [Operations](docs/operations.md): day-to-day, diagnosing a failed job, automatic re-run after a reboot
+
+## For agents
+
+- [Supervisor contract](agent/SUPERVISOR.md): invariants, paths, safe vs. destructive commands
+- [Installer contract](install/CONTRACT.md): config keys, flags, steps, exit codes

@@ -431,7 +431,8 @@ main() {
     # slots: about 1 in 4 UDP lookups to public resolvers lost a packet, and glibc waits 5 s
     # before retrying, so one dropped packet stacked past tool timeouts and builds failed on
     # "Could not resolve host" / "Temporary failure in name resolution". With these, a lost
-    # packet costs 1 s. Unlike no-aaaa, musl honours timeout and attempts too.
+    # packet costs 1 s. Measured with glibc clients; musl's resolver also parses timeout and
+    # attempts (per its source, not measured here), unlike no-aaaa.
     docker run -d --name "$DIND_C" --network "$NET" --network-alias dind --privileged \
         --sysctl net.ipv6.conf.all.disable_ipv6=1 \
         -e DOCKER_TLS_CERTDIR= \

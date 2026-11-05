@@ -816,7 +816,9 @@ phase_slots() {
     if grep -q -- '--dns="\$SLOT_GATEWAY"' "$launcher"; then
       skip "the installed launcher already points dind at the slot gateway"
     else
-      sed -i 's|^\( *\)--dns-opt=no-aaaa |\1--dns="$SLOT_GATEWAY" \\\n\1--dns-opt=no-aaaa |' "$launcher"
+      # Same line, no continuation: GNU sed 4.9 turned the old `\\\n` replacement into a
+      # literal backslash-n, which bash -n accepts and dockerd then gets as a stray `n`.
+      sed -i 's|^\( *\)--dns-opt=no-aaaa |\1--dns="$SLOT_GATEWAY" --dns-opt=no-aaaa |' "$launcher"
       grep -q -- '--dns="\$SLOT_GATEWAY"' "$launcher" \
         || undetermined "whether the launcher was pointed at the AAAA filter (the --dns-opt line was not found to anchor on)" \
                         "add --dns=\"\$SLOT_GATEWAY\" to the dind 'docker run' in $launcher by hand; see network/filter-aaaa.conf"

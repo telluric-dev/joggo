@@ -30,7 +30,7 @@ and a working fix for. Each link goes to the write-up, whether or not you use jo
 | You see | What it actually was |
 |---|---|
 | `i/o timeout` on `127.0.0.11:53`, `ENOTFOUND`, `Could not resolve host`, green on re-run | One lost DNS packet waiting out glibc's 5 s retry. [docs/dns-packet-loss.md](docs/dns-packet-loss.md) |
-| `The token expired on …`, then `The runner registration has been deleted from the server` | WSL2's clock froze while the PC slept, so every OAuth token looked expired. [docs/recovery.md §2](docs/recovery.md#2-failure-a--clock-drift-killed-the-registration) |
+| `The token expired on …`, then `The runner registration has been deleted from the server` | WSL2's clock froze while the PC slept, so every OAuth token looked expired. [docs/wsl2-clock-drift.md](docs/wsl2-clock-drift.md) |
 | Jobs queued forever, runner `active`, log silent, 0% CPU | A listener hung inside its token refresh. [docs/recovery.md §3](docs/recovery.md#3-failure-b--wedged-listener-hung-but-alive) |
 | `The job was not acquired by Runner of type self-hosted even after multiple attempts` | GitHub's acquisition timeout racing the runner's restart between jobs. [docs/memory-pressure.md §8](docs/memory-pressure.md#8-how-to-tell-an-acquisition-death-from-a-real-failure) |
 | `The self-hosted runner lost communication with the server` after a Windows Update | The reboot killed the job; joggo re-runs it. [docs/operations.md](docs/operations.md#automatic-retry-after-a-reboot) |
@@ -400,6 +400,9 @@ open an issue with the transcript, pass or fail. That run is worth more than any
   that is merely slow.
 - The Docker-in-Docker daemon is probed once at slot start and never again.
 - Container memory limits are unset; the guard works at the VM level instead.
+- The clock self-heal (chrony `makestep 1 -1`) ran on the original box but **the installer
+  does not apply it**, nor install chrony. It is a manual step:
+  [docs/wsl2-clock-drift.md](docs/wsl2-clock-drift.md).
 - `GET /actions/runs/{id}/jobs` returns only the **latest** attempt, so a green re-run
   erases the record of an earlier acquisition death. Any rate computed from it is a
   floor.

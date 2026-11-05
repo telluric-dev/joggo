@@ -18,6 +18,7 @@ even without running joggo.
 ## Failures with a measured cause and fix
 
 - [DNS packet loss](docs/dns-packet-loss.md): `i/o timeout` on 127.0.0.11:53 / `Could not resolve host` in CI; fix with `timeout:1 attempts:3`
+- [WSL2 clock drift](docs/wsl2-clock-drift.md): `The token expired` / `runner registration has been deleted` after sleep or power loss; fix with chrony `makestep 1 -1` and a synced Windows clock
 - [Recovery](docs/recovery.md): runner not taking jobs; clock drift vs. wedged listener vs. Actions outage vs. reboot, with opposite fixes
 - [Memory pressure](docs/memory-pressure.md): running CI on a 16 GB desktop; the guard, and why `FreePhysicalMemory` misleads
 - [Operations](docs/operations.md): day-to-day, diagnosing a failed job, automatic re-run after a reboot

@@ -236,6 +236,15 @@ worse.
 
 If you are an AI agent asked to run or repair this box, this section is for you.
 
+**Claude Code users: install the operator skills as a plugin.** They load the right runbook
+for the problem at hand (supervising the box, a failed job, a runner not taking jobs, adding
+a slot, risky upgrades):
+
+```
+/plugin marketplace add telluric-dev/joggo
+/plugin install joggo@joggo
+```
+
 **There is a better version of this, specific to your box.** The installer renders
 [`agent/SUPERVISOR.md`](agent/SUPERVISOR.md) to `C:\ProgramData\joggo\SUPERVISOR.md` with
 the real distro name, paths, slot count and thresholds substituted — so it says

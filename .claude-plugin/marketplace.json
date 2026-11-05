@@ -1,0 +1,12 @@
+{
+  "name": "joggo",
+  "owner": { "name": "telluric-dev" },
+  "description": "The joggo plugin: operator skills for a self-hosted GitHub Actions runner on Windows + WSL2.",
+  "plugins": [
+    {
+      "name": "joggo",
+      "source": "./",
+      "description": "Operate a joggo self-hosted GitHub Actions runner on Windows + WSL2."
+    }
+  ]
+}

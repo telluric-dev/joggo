@@ -1,0 +1,10 @@
+{
+  "name": "joggo",
+  "version": "0.1.0",
+  "description": "Operate a joggo self-hosted GitHub Actions runner on Windows + WSL2: supervise it, diagnose failed jobs, recover a runner that stopped taking jobs, add capacity, and make risky changes safely.",
+  "author": { "name": "telluric-dev" },
+  "homepage": "https://github.com/telluric-dev/joggo",
+  "repository": "https://github.com/telluric-dev/joggo",
+  "license": "MIT",
+  "keywords": ["github-actions", "self-hosted-runner", "wsl2", "ci", "homelab"]
+}

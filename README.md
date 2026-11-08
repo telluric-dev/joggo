@@ -6,10 +6,11 @@ A self-hosted GitHub Actions runner built to run for weeks on a machine someone 
 also using.
 
 Not a Kubernetes operator, not an autoscaler, not a fleet. One ordinary Windows PC
-with 16 GB of RAM, WSL2, and two containerised runner slots that have taken
-production builds for ten months — through clock drift, power loss, Windows Update
-reboots, memory exhaustion down to 445 MB available, and a Docker daemon that
-occasionally stops answering.
+with 16 GB of RAM and WSL2, taking production builds since June 2026: one runner at
+first, containerised runner slots since September, two of them from the end of September
+and three since late October. Through clock drift, power loss, Windows Update reboots,
+memory exhaustion down to 445 MB available, and a Docker daemon that occasionally stops
+answering.
 
 The code is maybe half of it. The other half is the comments: most files carry the
 failure that produced them, what was measured, and what was tried and did not work.

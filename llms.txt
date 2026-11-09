@@ -3,7 +3,7 @@
 > A self-hosted GitHub Actions runner for one ordinary Windows PC with WSL2: containerised,
 > one-job-per-container runner slots, a memory guard that holds new jobs when the desktop is
 > short of RAM, and self-heals for the failures that took a real runner down (WSL2 clock
-> freeze, a hung listener, Windows Update reboots). MIT. Linux/amd64 jobs only; private
+> freeze, a hung listener, Windows Update reboots). Apache-2.0. Linux/amd64 jobs only; private
 > repositories only.
 
 Most files carry the failure that produced them and what was measured. The docs are useful

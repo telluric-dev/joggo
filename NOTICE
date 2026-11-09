@@ -1,0 +1,20 @@
+joggo
+Copyright 2026 Amir Gur
+https://github.com/telluric-dev/joggo
+
+This product includes software developed as joggo by Amir Gur (telluric-dev),
+licensed under the Apache License, Version 2.0.
+
+Under section 4(d) of that licence, any redistribution of joggo or of a work
+derived from it must carry this NOTICE text: in a NOTICE file distributed with
+it, and in the documentation or a display the work generates, wherever such
+third-party notices normally appear.
+
+Requested form of credit: a visible line near the top of the README or the
+documentation of any project that republishes joggo code, naming joggo and
+linking to https://github.com/telluric-dev/joggo. For example:
+
+    Based on joggo by Amir Gur (https://github.com/telluric-dev/joggo).
+
+Versions of joggo published up to and including commit 2c8be2f (2026-11-08)
+were released under the MIT License, which continues to apply to those versions.

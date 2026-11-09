@@ -425,4 +425,11 @@ A measurement beats an opinion, and a method beats a measurement.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE). Provided as is, without warranty of any kind.
+Apache-2.0: see [`LICENSE`](LICENSE). Provided as is, without warranty of any kind.
+
+**If you republish joggo or build on its code, carry the [`NOTICE`](NOTICE) file.** The
+licence requires it (section 4(d)), and NOTICE says how to credit joggo: a visible line
+near the top of your README, naming joggo and linking here.
+
+Versions up to and including commit `2c8be2f` (2026-11-08) were released under MIT, which
+still applies to them.

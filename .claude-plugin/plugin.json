@@ -5,6 +5,6 @@
   "author": { "name": "telluric-dev" },
   "homepage": "https://github.com/telluric-dev/joggo",
   "repository": "https://github.com/telluric-dev/joggo",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": ["github-actions", "self-hosted-runner", "wsl2", "ci", "homelab"]
 }

@@ -130,6 +130,13 @@ green build. **Windows 10 2004+ or 11 with WSL2 is the only supported target**: 
 Windows-side tool here (guard, sampler, monitor, day report) talks to the WSL VM from
 the host, so there is no native-Linux or VM path.
 
+**Easiest: download [`joggo-setup.exe`](https://github.com/telluric-dev/joggo/releases/latest)**
+from the latest release and run it. It is signed (Telluric solutions ltd.), downloads that
+release, checks its SHA-256, and runs the wizard below, which opens GitHub's runner
+registration page for you. How it works: [`setup/README.md`](setup/README.md).
+
+From a clone:
+
 ```powershell
 ./install.ps1 -PreflightOnly                     # checks everything, changes nothing
 ./install.ps1 -Wizard                            # a human

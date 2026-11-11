@@ -52,7 +52,7 @@ try {
   $sums = @($zip) | ForEach-Object { '{0}  {1}' -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path -Leaf $_) }
   Set-Content -Path (Join-Path $dist 'SHA256SUMS') -Value $sums -Encoding ASCII
 
-  Write-Host "built from $tag ($(& git rev-parse --short $tag)):"
+  Write-Host "built from $tag ($(& git rev-parse --short "$tag^{commit}")):"
   $sums | ForEach-Object { Write-Host "  $_" }
   Write-Host 'next: sign dist/joggo-setup.exe, append its SHA-256 to SHA256SUMS, then upload all three to the release.'
 } finally { Pop-Location }

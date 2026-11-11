@@ -584,8 +584,25 @@ function Resolve-JoggoDistro {
 
   $ubuntu = @($names | Where-Object { $_ -match '^(?i)ubuntu' })
   if($ubuntu.Count -eq 1){
-    Say $Ctx "'$($Cfg.distro)' is not installed, but '$($ubuntu[0])' is — using it. (Pass -Distro to override.)"
-    $Cfg.distro = $ubuntu[0]
+    # NEVER ADOPT SOMEBODY'S DISTRO SILENTLY. Until 0.1.1 a single Ubuntu was taken
+    # without asking, and on the box joggo came from that one Ubuntu was the LIVE runner's
+    # distro: the install would have reconfigured Docker under running jobs. An existing
+    # Ubuntu is usually someone's working environment, so using it takes a yes; the
+    # default is a fresh distro of the configured name, which 20-distro offers to install.
+    $u = $ubuntu[0]
+    Write-JLine $Ctx "'$($Cfg.distro)' is not installed. '$u' is, but it may be your working environment:"
+    Write-JLine $Ctx "joggo installs Docker, a runner user and services into the distro it uses."
+    if($Ctx.Yes){
+      Warn $Ctx "-Yes: using the existing '$u'. Pass -Distro to choose explicitly."
+      $Cfg.distro = $u
+    } elseif($Ctx.NonInteractive){
+      Fail -Ctx $Ctx -Problem "'$($Cfg.distro)' is not installed and the only Ubuntu is '$u', which may be in use" `
+        -Action "pass -Distro $u to use it, or -Distro <new name> to have one installed" -Code 2
+    } elseif(Confirm-Joggo -Ctx $Ctx -Question "Use the existing '$u' for joggo? No installs a separate '$($Cfg.distro)' instead"){
+      $Cfg.distro = $u
+    } else {
+      Say $Ctx "keeping '$($Cfg.distro)'; 20-distro will offer to install it."
+    }
     return $Cfg
   }
   if($ubuntu.Count -gt 1){
@@ -597,9 +614,13 @@ function Resolve-JoggoDistro {
       Fail -Ctx $Ctx -Problem 'several Ubuntu distros are installed and none matches the configured name' `
         -Action ("pass -Distro with one of: " + ($ubuntu -join ', ')) -Code 2
     }
-    $pick = ''
-    while($ubuntu -notcontains $pick){ $pick = (Read-Host ("which distro? [" + $ubuntu[0] + "]")).Trim(); if(-not $pick){ $pick = $ubuntu[0] } }
-    $Cfg.distro = $pick
+    # No default among existing distros: Enter means a fresh one, never "the first one".
+    $pick = $null
+    while($null -eq $pick){
+      $a = (Read-Host ("which distro? Enter = install a separate '" + $Cfg.distro + "'")).Trim()
+      if(-not $a){ $pick = '' } elseif($ubuntu -contains $a){ $pick = $a }
+    }
+    if($pick){ $Cfg.distro = $pick } else { Say $Ctx "keeping '$($Cfg.distro)'; 20-distro will offer to install it." }
     return $Cfg
   }
   Say $Ctx "no Ubuntu distro is installed (found: $(if($names.Count){$names -join ', '}else{'none'})). 20-distro will offer to install '$($Cfg.distro)'."

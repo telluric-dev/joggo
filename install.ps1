@@ -105,7 +105,7 @@ function Show-Usage {
 joggo install — a self-hosted GitHub Actions runner on Windows + WSL2.
 
   ./install.ps1                                    wizard (the human front door)
-  ./install.ps1 -NonInteractive -Scope repo -Repo me/app -Token $env:JOGGO_TOKEN
+  ./install.ps1 -NonInteractive -Yes -Scope repo -Repo me/app -Token $env:JOGGO_TOKEN
   ./install.ps1 -PreflightOnly                     check the box, change nothing
   ./install.ps1 -DryRun -NonInteractive -Scope repo -Repo me/app -Token x
 
@@ -144,7 +144,8 @@ CONFIG (defaults scale with RAM; see install/CONTRACT.md for the schema)
 
 BEHAVIOUR
   -Wizard                interactive. The default when no scope flag is given.
-  -NonInteractive        never prompt; exit 2 if something required is missing.
+  -NonInteractive        never prompt; exit 2 if something required is missing, or
+                         without -Yes (the final "install now?" needs an answer).
   -PreflightOnly         run preflight, report, exit. Changes nothing.
   -SkipPreflight         run the steps without preflight. You are on your own.
   -Json                  machine-readable on stdout, human text on stderr.
@@ -420,6 +421,22 @@ Write-JLine $ctx ("  filterAaaa : {0}   tailscale: {1}" -f $cfg.filterAaaa, $cfg
 Write-JLine $ctx ("  token      : {0}" -f (& { if($regToken){'held in memory, never written'} else {'none (dry run)'} }))
 if($ctx.DryRun){ Write-JLine $ctx '  DRY RUN    : nothing will be changed, and no wsl.exe call will be made.' }
 Write-JLine $ctx '=============================================================================='
+
+# THE LAST QUESTION BEFORE ANYTHING CHANGES. Everything above is read-only: preflight,
+# the wizard's questions, the token. Everything below configures the distro named in
+# the summary: a runner user, Docker and its daemon config, services, scheduled tasks.
+# Until 0.1.1 the wizard went straight from this summary into the steps, so a person
+# who had only meant to look, or had not noticed which distro was named, got an install
+# into it. -Yes answers for an agent; -DryRun has nothing to confirm.
+if(-not $ctx.DryRun){
+  if(-not (Confirm-Joggo -Ctx $ctx -Question ("Install joggo into distro '" + $cfg.distro + "' now? It sets up a runner user, Docker and services inside it"))){
+    if($ctx.NonInteractive){
+      Fail -Ctx $ctx -Problem 'not confirmed' -Action 'pass -Yes to install without the final question' -Code 2
+    }
+    Say $ctx 'Not installed. Nothing was changed.'
+    exit 0
+  }
+}
 
 
 # ------------------------------------------------------------------- elevation

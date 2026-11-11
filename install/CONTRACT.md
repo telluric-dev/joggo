@@ -100,7 +100,9 @@ Plus:
 
 ```
 -Wizard            interactive. The default when no scope-determining flag is given.
--NonInteractive    never prompt; fail with exit 2 if something required is missing.
+-NonInteractive    never prompt; fail with exit 2 if something required is missing, or if
+                   -Yes is absent: the final "install now?" and the use of an existing
+                   Ubuntu other than the configured one both need an answer.
 -PreflightOnly     run preflight, report, exit. Changes nothing.
 -Json              machine-readable output on stdout; human text to stderr. For agents.
 -DryRun            print every step's intent, change nothing.

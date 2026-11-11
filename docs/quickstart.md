@@ -40,7 +40,7 @@ the one-line form. It is never written to the config, a log, or a transcript.
 ## 3. Install
 
 ```powershell
-./install.ps1 -Wizard        # a human: it asks, shows the config, then runs
+./install.ps1 -Wizard        # a human: it asks, shows the config, asks once more, then runs
 
 # an agent, personal account, one repository:
 ./install.ps1 -NonInteractive -Json -Yes -Scope repo -Repo me/my-app -Token $env:JOGGO_TOKEN -Slots 1

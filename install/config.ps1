@@ -234,6 +234,13 @@ function Resolve-JoggoToken {
   Write-JLine $Ctx ''
   Write-JLine $Ctx 'Registration token. Mint it at:'
   if($Ctx.TokenUrl){ Write-JLine $Ctx ("  " + $Ctx.TokenUrl) }
+  # Open the page for a human: finding it is the step new users got stuck on. Only in the
+  # interactive path (NonInteractive returned above), and a failure to open is not fatal,
+  # since the URL is printed either way.
+  if($Ctx.TokenUrl){
+    try { Start-Process $Ctx.TokenUrl -ErrorAction Stop; Write-JLine $Ctx '  (opened in your browser)' } catch {}
+  }
+  Write-JLine $Ctx 'On that page, choose Linux / x64, then under "Configure" copy the value after --token.'
   Write-JLine $Ctx 'It is short-lived (~1h) and is never written to disk by this installer.'
   $sec = Read-Host -AsSecureString 'Token (not echoed)'
   if(-not $sec){ return '' }

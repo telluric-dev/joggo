@@ -18,3 +18,4 @@ snapshots/
 .DS_Store
 Thumbs.db
 *.swp
+dist/
